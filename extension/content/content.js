@@ -17,6 +17,7 @@ const MAX_CHARS_PER_LINE = 50; // 每句最多 50 字元
 
 // 上一次的辨識文字（用於檢測增量）
 let lastTranscript = '';
+let lastFinalTranscript = ''; // 上一次的 final 結果，用於避免重複
 
 // Web Speech API
 let recognition = null;
@@ -332,92 +333,76 @@ function normalizeText(text) {
   return text.trim().replace(/\s+/g, ' ');
 }
 
-// 檢查文字是否為重複（包含時間檢查以防止快速重複）
-function isDuplicate(text, checkRecentOnly = false) {
-  const normalized = normalizeText(text);
-  const now = Date.now();
-
-  // 檢查是否在 displayBuffer 中已存在
-  for (let i = 0; i < displayBuffer.length; i++) {
-    const item = displayBuffer[i];
-    const itemNormalized = normalizeText(item.text);
-
-    // 如果文字完全相同
-    if (itemNormalized === normalized) {
-      // 如果只檢查最近的（1秒內），用於防止快速重複
-      if (checkRecentOnly) {
-        if (now - item.timestamp < 1000) {
-          console.log('[Content] 偵測到快速重複（1秒內）:', text);
-          return true;
-        }
-      } else {
-        console.log('[Content] 偵測到重複句子:', text);
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
 // 顯示字幕
 function displaySubtitle(text, isFinal) {
   if (!text) return;
 
   if (isFinal) {
-    console.log('[Content] === Final 結果開始 ===');
-    console.log('[Content] 原始文字:', text);
-    console.log('[Content] 當前 displayBuffer 長度:', displayBuffer.length);
-    console.log('[Content] displayBuffer 內容:', displayBuffer.map(item => item.text));
+    console.log('[Content] === Final 結果 ===');
+    console.log('[Content] 原始文字 (', text.length, '字):', text);
 
-    // 最終結果 - 智能斷句處理
-    currentSubtitle = text;
-    interimSubtitle = '';
+    const normalized = normalizeText(text);
 
-    // 智能斷句 - 將長文字切分成多句
-    const sentences = smartSplit(text);
-    console.log('[Content] 斷句結果，共', sentences.length, '句:', sentences);
-
-    // 過濾掉已經存在的句子（強化的去重檢查）
-    const newSentences = sentences.filter(sentence => {
-      const isDup = isDuplicate(sentence, false);
-      if (isDup) {
-        return false;
-      }
-      return true;
-    });
-
-    console.log('[Content] 過濾後的新句子，共', newSentences.length, '句:', newSentences);
-
-    // 如果沒有新句子，直接返回
-    if (newSentences.length === 0) {
-      console.log('[Content] ❌ 所有句子都已存在，跳過整個 final 結果');
-      console.log('[Content] === Final 結果結束 ===');
+    // 檢查是否和上一次的 final 完全相同（防止 API 重複發送）
+    if (normalized === lastFinalTranscript) {
+      console.log('[Content] ❌ 和上一次 final 結果相同，跳過');
       return;
     }
 
-    // 將新句子加入緩衝區
+    // 更新最後的 final 結果
+    lastFinalTranscript = normalized;
+    currentSubtitle = text;
+    interimSubtitle = '';
+
+    console.log('[Content] Buffer 清理前:', displayBuffer.length, '項');
+
+    // 清理所有 interim 來源的項目（這些是臨時的）
+    const beforeCleanup = displayBuffer.length;
+    displayBuffer = displayBuffer.filter(item => item.source === 'final');
+    const afterCleanup = displayBuffer.length;
+
+    if (beforeCleanup !== afterCleanup) {
+      console.log('[Content] 已清理', beforeCleanup - afterCleanup, '個 interim 項目');
+    }
+
+    // 智能斷句 - 將長文字切分成多句
+    const sentences = smartSplit(normalized);
+    console.log('[Content] 斷句結果:', sentences.length, '句');
+
+    // 檢查每個句子是否已經在 buffer 中（只檢查 final 來源的）
+    const finalTexts = displayBuffer.map(item => item.text);
+    const newSentences = sentences.filter(sentence => {
+      const exists = finalTexts.includes(sentence);
+      if (exists) {
+        console.log('[Content] 句子已存在:', sentence.substring(0, 20) + '...');
+      }
+      return !exists;
+    });
+
+    console.log('[Content] 新增', newSentences.length, '個新句子');
+
+    // 加入新句子
     newSentences.forEach(sentence => {
-      const normalizedSentence = normalizeText(sentence);
       displayBuffer.push({
-        text: normalizedSentence,
-        timestamp: Date.now()
+        text: sentence,
+        timestamp: Date.now(),
+        source: 'final'
       });
 
       // 加入歷史記錄
       subtitleHistory.push({
-        text: normalizedSentence,
+        text: sentence,
         timestamp: Date.now(),
         language: currentLanguage
       });
 
-      console.log('[Content] ✅ 新增句子到 displayBuffer:', normalizedSentence);
+      console.log('[Content] ✅ 新增:', sentence.substring(0, 30) + (sentence.length > 30 ? '...' : ''));
     });
 
     // 限制緩衝區大小（只保留最近 N 句）
     while (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
       const removed = displayBuffer.shift();
-      console.log('[Content] 移除舊句子:', removed.text);
+      console.log('[Content] 移除舊句子:', removed.text.substring(0, 20) + '...');
     }
 
     // 限制歷史記錄長度
@@ -431,64 +416,61 @@ function displaySubtitle(text, isFinal) {
     // 更新顯示
     updateSubtitleDisplay();
 
-    console.log('[Content] 更新後 displayBuffer 長度:', displayBuffer.length);
-    console.log('[Content] === Final 結果結束 ===');
+    console.log('[Content] Buffer 最終狀態:', displayBuffer.length, '項');
 
-    // 重置上一次的文字
+    // 重置
     lastTranscript = '';
 
   } else {
-    // 臨時結果 - 檢查是否需要自動斷句
-    const newContent = text.slice(lastTranscript.length);
+    // ========== Interim 結果處理 ==========
 
-    // 如果臨時文字太長，自動創建新句
+    // 如果臨時文字太長，自動創建新句（標記為 interim）
     if (text.length > MAX_CHARS_PER_LINE) {
-      console.log('[Content] Interim 文字過長，進行自動斷句:', text.length, '字元');
+      console.log('[Content] Interim 過長 (', text.length, '字)，自動斷句');
 
       // 找到適合的斷句點
       const splitPoint = findSplitPoint(text, MAX_CHARS_PER_LINE);
 
       if (splitPoint > 0) {
-        // 前半部分作為完整句子
-        const completedPart = text.slice(0, splitPoint).trim();
-        if (completedPart) {
-          // 檢查是否已經存在於 displayBuffer 中
-          const isDup = isDuplicate(completedPart, false);
+        // 前半部分作為完整句子（interim 來源）
+        const completedPart = normalizeText(text.slice(0, splitPoint));
 
-          if (!isDup) {
-            const normalized = normalizeText(completedPart);
-            displayBuffer.push({
-              text: normalized,
-              timestamp: Date.now()
-            });
+        // 檢查是否已存在（檢查所有來源）
+        const exists = displayBuffer.some(item => item.text === completedPart);
 
-            console.log('[Content] ✅ Interim 自動斷句新增:', normalized);
+        if (!exists && completedPart) {
+          displayBuffer.push({
+            text: completedPart,
+            timestamp: Date.now(),
+            source: 'interim'  // 標記為臨時來源
+          });
 
-            // 限制緩衝區大小
-            while (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
-              const removed = displayBuffer.shift();
-              console.log('[Content] 移除舊句子:', removed.text);
-            }
-          } else {
-            console.log('[Content] ❌ Interim 自動斷句：句子已存在，跳過:', completedPart);
+          console.log('[Content] ✅ Interim 斷句:', completedPart.substring(0, 30) + '...');
+
+          // 限制緩衝區大小
+          while (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
+            displayBuffer.shift();
           }
         }
 
-        // 後半部分作為臨時文字
+        // 後半部分作為臨時文字顯示
         const remainingPart = text.slice(splitPoint).trim();
         interimSubtitle = remainingPart;
         lastTranscript = text;
         updateSubtitleDisplay(remainingPart);
-      } else {
-        // 找不到合適的斷點，直接顯示
-        interimSubtitle = text;
-        updateSubtitleDisplay(text);
+
+        // 自動顯示字幕
+        if (!isVisible) {
+          showSubtitleUI();
+        }
+        return;
       }
-    } else {
-      // 文字不長，直接顯示
-      interimSubtitle = text;
-      updateSubtitleDisplay(text);
     }
+
+    // 文字不長或找不到斷點，直接顯示（不加入 buffer）
+    interimSubtitle = text;
+    lastTranscript = text;
+    updateSubtitleDisplay(text);
   }
 
   // 自動顯示字幕
