@@ -851,6 +851,10 @@ Before committing changes, verify:
   - Retries up to 3 times with 500ms intervals
   - Ensures subtitle messages reach the page even if content script is still loading
   - Critical for subtitle display functionality
+- 🔧 **CRITICAL FIX**: Fixed "Cannot capture a tab with an active stream" error
+  - Changed stopCapture() to async function with proper resource cleanup
+  - Added 500ms delay to ensure stream resources are fully released
+  - Prevents conflicts when starting new recording while old stream is active
 - ✅ Enhanced error messages for Chrome internal pages
 - ✅ Added detailed logging for debugging permission issues
 - 📝 **Important**: In Manifest V3, tabCapture does NOT show traditional permission dialog - it auto-grants/denies based on manifest config

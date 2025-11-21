@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Retries up to 3 times with 500ms intervals
   - Ensures subtitle messages reach the page even if content script is still loading
   - Critical for subtitle display functionality
+- **CRITICAL**: Fixed "Cannot capture a tab with an active stream" error
+  - Changed stopCapture() to async function that waits for resource cleanup
+  - Added 500ms delay after stopping to ensure stream resources are fully released
+  - Prevents conflicts when starting new recording while old stream is still active
+  - Fixes errors when repeatedly clicking Start button or switching recordings
 - Improved error handling when permission is denied or unavailable
 - Added validation to prevent usage on Chrome internal pages (chrome://, chrome-extension://)
 - Enhanced error messages to provide clearer guidance to users
