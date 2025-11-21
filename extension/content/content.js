@@ -13,6 +13,10 @@ let editModal = null; // 編輯視窗
 // 顯示緩衝區 - 保存最近的句子用於滾動顯示
 let displayBuffer = []; // 最多保存 3 句
 const MAX_DISPLAY_SENTENCES = 3;
+const MAX_CHARS_PER_LINE = 50; // 每句最多 50 字元
+
+// 上一次的辨識文字（用於檢測增量）
+let lastTranscript = '';
 
 // Web Speech API
 let recognition = null;
@@ -328,30 +332,32 @@ function displaySubtitle(text, isFinal) {
   if (!text) return;
 
   if (isFinal) {
-    // 最終結果 - 加入緩衝區
+    // 最終結果 - 智能斷句處理
     currentSubtitle = text;
     interimSubtitle = '';
 
-    // 將新句子加入顯示緩衝區
-    displayBuffer.push({
-      text: text,
-      timestamp: Date.now()
+    // 智能斷句 - 將長文字切分成多句
+    const sentences = smartSplit(text);
+
+    // 將所有句子加入緩衝區
+    sentences.forEach(sentence => {
+      displayBuffer.push({
+        text: sentence,
+        timestamp: Date.now()
+      });
+
+      // 加入歷史記錄
+      subtitleHistory.push({
+        text: sentence,
+        timestamp: Date.now(),
+        language: currentLanguage
+      });
     });
 
     // 限制緩衝區大小（只保留最近 N 句）
-    if (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
+    while (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
       displayBuffer.shift();
     }
-
-    // 更新顯示
-    updateSubtitleDisplay();
-
-    // 加入歷史記錄
-    subtitleHistory.push({
-      text: text,
-      timestamp: Date.now(),
-      language: currentLanguage
-    });
 
     // 限制歷史記錄長度
     if (subtitleHistory.length > 50) {
@@ -361,16 +367,109 @@ function displaySubtitle(text, isFinal) {
     // 儲存到 storage
     chrome.storage.local.set({ subtitleHistory });
 
+    // 更新顯示
+    updateSubtitleDisplay();
+
+    // 重置上一次的文字
+    lastTranscript = '';
+
   } else {
-    // 臨時結果 - 顯示在最後一行後面
-    interimSubtitle = text;
-    updateSubtitleDisplay(text);
+    // 臨時結果 - 檢查是否需要自動斷句
+    const newContent = text.slice(lastTranscript.length);
+
+    // 如果臨時文字太長，自動創建新句
+    if (text.length > MAX_CHARS_PER_LINE) {
+      // 找到適合的斷句點
+      const splitPoint = findSplitPoint(text, MAX_CHARS_PER_LINE);
+
+      if (splitPoint > 0) {
+        // 前半部分作為完整句子
+        const completedPart = text.slice(0, splitPoint).trim();
+        if (completedPart) {
+          displayBuffer.push({
+            text: completedPart,
+            timestamp: Date.now()
+          });
+
+          // 限制緩衝區大小
+          while (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
+            displayBuffer.shift();
+          }
+        }
+
+        // 後半部分作為臨時文字
+        const remainingPart = text.slice(splitPoint).trim();
+        interimSubtitle = remainingPart;
+        lastTranscript = text;
+        updateSubtitleDisplay(remainingPart);
+      } else {
+        // 找不到合適的斷點，直接顯示
+        interimSubtitle = text;
+        updateSubtitleDisplay(text);
+      }
+    } else {
+      // 文字不長，直接顯示
+      interimSubtitle = text;
+      updateSubtitleDisplay(text);
+    }
   }
 
   // 自動顯示字幕
   if (!isVisible) {
     showSubtitleUI();
   }
+}
+
+// 智能斷句 - 將長文字切分成多個短句
+function smartSplit(text) {
+  const sentences = [];
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    if (remaining.length <= MAX_CHARS_PER_LINE) {
+      // 剩餘文字不長，直接加入
+      sentences.push(remaining.trim());
+      break;
+    }
+
+    // 找到斷句點
+    const splitPoint = findSplitPoint(remaining, MAX_CHARS_PER_LINE);
+
+    if (splitPoint > 0) {
+      // 切分
+      sentences.push(remaining.slice(0, splitPoint).trim());
+      remaining = remaining.slice(splitPoint).trim();
+    } else {
+      // 找不到合適的斷點，強制切分
+      sentences.push(remaining.slice(0, MAX_CHARS_PER_LINE).trim());
+      remaining = remaining.slice(MAX_CHARS_PER_LINE).trim();
+    }
+  }
+
+  return sentences.filter(s => s.length > 0);
+}
+
+// 尋找最佳斷句點
+function findSplitPoint(text, maxLength) {
+  // 優先在標點符號處斷句
+  const punctuations = ['。', '！', '？', '、', '，', '.', '!', '?', ',', ' '];
+
+  // 在 maxLength 範圍內尋找最後一個標點符號
+  for (let i = Math.min(maxLength, text.length - 1); i > maxLength * 0.5; i--) {
+    if (punctuations.includes(text[i])) {
+      return i + 1; // 包含標點符號
+    }
+  }
+
+  // 找不到標點，在空格處斷句（英文）
+  for (let i = Math.min(maxLength, text.length - 1); i > maxLength * 0.5; i--) {
+    if (text[i] === ' ') {
+      return i + 1;
+    }
+  }
+
+  // 都找不到，就直接在 maxLength 處切
+  return maxLength;
 }
 
 // 更新字幕顯示
