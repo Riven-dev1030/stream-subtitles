@@ -27,7 +27,8 @@ let isRecording = false;
 let currentLanguage = 'en';
 let autoDetect = false;
 let heartbeatTimer = null; // 心跳檢測計時器
-const HEARTBEAT_INTERVAL = 5000; // 5秒檢測一次
+const HEARTBEAT_INTERVAL = 2000; // 2秒檢測一次（從5秒提高頻率）
+const HEARTBEAT_TIMEOUT = 5000; // 5秒無結果就重啟（從10秒縮短）
 
 // 檢查瀏覽器支援
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -798,9 +799,9 @@ function startHeartbeat() {
 
     console.log('[Content] ⏱️ 心跳檢查：距離上次結果', Math.round(timeSinceLastResult / 1000), '秒');
 
-    // 如果超過 10 秒沒有收到任何結果（包括 interim），可能卡住了
-    if (timeSinceLastResult > 10000 && isRecording) {
-      console.warn('[Content] ⚠️ 偵測到可能卡住（10秒無結果），嘗試重啟...');
+    // 如果超過指定時間沒有收到任何結果（包括 interim），可能卡住了
+    if (timeSinceLastResult > HEARTBEAT_TIMEOUT && isRecording) {
+      console.warn('[Content] ⚠️ 偵測到可能卡住（' + (HEARTBEAT_TIMEOUT/1000) + '秒無結果），嘗試重啟...');
       showToast('⚠️ 偵測到異常，正在重啟語音辨識...');
 
       // 重啟語音辨識
