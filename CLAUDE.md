@@ -574,6 +574,30 @@ User corrects subtitle → Storage → Background generates keywords → Deepgra
    - Restart Chrome
    - Check Chrome version (requires Chrome 116+)
 
+**Important Implementation Detail:**
+
+When using `navigator.mediaDevices.getUserMedia()` with tabCapture in offscreen documents, the constraints **must** use the `mandatory` wrapper:
+
+```javascript
+// ✅ CORRECT format (official Chrome documentation)
+const stream = await navigator.mediaDevices.getUserMedia({
+  audio: {
+    mandatory: {
+      chromeMediaSource: 'tab',
+      chromeMediaSourceId: streamId
+    }
+  }
+});
+
+// ❌ INCORRECT format (will cause permission errors)
+const stream = await navigator.mediaDevices.getUserMedia({
+  audio: {
+    chromeMediaSource: 'tab',
+    chromeMediaSourceId: streamId
+  }
+});
+```
+
 **Problem: No subtitles appearing**
 
 **Symptoms:** Extension loaded, recording started, but no subtitles show

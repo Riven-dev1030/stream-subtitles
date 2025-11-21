@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.1] - 2025-11-21
 
 ### Fixed
+- **CRITICAL**: Fixed getUserMedia constraints format in offscreen.js
+  - Changed to use `mandatory` wrapper for chromeMediaSource and chromeMediaSourceId
+  - This is the correct format according to Chrome official documentation
+  - Fixes "Permission dismissed" errors in offscreen document
 - **CRITICAL**: Fixed `chrome.tabCapture.getMediaStreamId()` failing silently due to missing "tabs" permission
   - Added "tabs" permission to manifest.json
   - This permission is required for tabCapture API to work properly in Manifest V3
