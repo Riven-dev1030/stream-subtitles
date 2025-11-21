@@ -11,7 +11,9 @@
   padding: 10px 15px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  display: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   backdrop-filter: blur(10px);
 }
 
@@ -79,21 +81,66 @@
   pointer-events: none;
 }
 
-#stream-subtitle-text {
+/* 顯示字幕容器 */
+#stream-subtitle-container.visible {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+/* 字幕內容容器 */
+.subtitle-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   background: rgba(0, 0, 0, 0.85);
-  color: #ffffff;
-  padding: 12px 24px;
   border-radius: 8px;
+  padding: 12px 24px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+  animation: fadeIn 0.2s ease;
+}
+
+/* 字幕文字 */
+.subtitle-text {
+  color: #ffffff;
   font-size: 24px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   font-weight: 500;
   line-height: 1.4;
   text-align: center;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(10px);
   word-wrap: break-word;
-  max-width: 100%;
-  animation: fadeIn 0.2s ease;
+}
+
+/* 臨時字幕樣式 */
+.subtitle-text.interim {
+  opacity: 0.7;
+  font-style: italic;
+}
+
+/* 編輯按鈕 */
+.edit-btn {
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #ffffff;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 18px;
+  transition: all 0.2s ease;
+  outline: none;
+  flex-shrink: 0;
+  pointer-events: auto;
+}
+
+.edit-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: scale(1.1);
+}
+
+.edit-btn:active {
+  transform: scale(0.95);
 }
 
 @keyframes fadeIn {
@@ -108,7 +155,7 @@
 }
 
 /* 空字幕時不顯示背景 */
-#stream-subtitle-text:empty {
+.subtitle-text:empty {
   display: none;
 }
 
@@ -131,8 +178,11 @@
     max-width: 90%;
   }
 
-  #stream-subtitle-text {
+  .subtitle-text {
     font-size: 18px;
+  }
+
+  .subtitle-content {
     padding: 10px 16px;
   }
 }
@@ -145,39 +195,35 @@
   padding: 0;
 }
 
-/* 字幕編輯按鈕 */
-#stream-subtitle-text {
-  pointer-events: auto;
+/* 狀態指示器 */
+.status-indicator {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 12px;
+  gap: 8px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
 }
 
-.subtitle-content {
-  flex: 1;
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #888;
 }
 
-.edit-subtitle-btn {
-  background: rgba(255, 255, 255, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  color: #ffffff;
-  padding: 6px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 18px;
-  transition: all 0.2s ease;
-  outline: none;
-  flex-shrink: 0;
+.status-dot.recording {
+  background: #f44336;
+  animation: pulse 1.5s infinite;
 }
 
-.edit-subtitle-btn:hover {
-  background: rgba(255, 255, 255, 0.3);
-  transform: scale(1.1);
+/* 按鈕樣式 */
+.start-btn, .toggle-btn {
+  min-width: 40px;
 }
 
-.edit-subtitle-btn:active {
-  transform: scale(0.95);
+.start-btn.recording {
+  background: #f44336;
+  border-color: #f44336;
 }
 
 /* 編輯視窗 */
@@ -195,7 +241,11 @@
   backdrop-filter: blur(5px);
 }
 
-.edit-modal-content {
+#stream-subtitle-edit-modal.visible {
+  display: flex;
+}
+
+.modal-content {
   background: white;
   border-radius: 12px;
   padding: 30px;
@@ -216,14 +266,18 @@
   }
 }
 
-.edit-modal-content h3 {
+.modal-content h3 {
   margin: 0 0 20px 0;
   color: #333;
   font-size: 20px;
   font-weight: 600;
 }
 
-.edit-form label {
+.form-group {
+  margin-bottom: 15px;
+}
+
+.form-group label {
   display: block;
   margin-bottom: 8px;
   color: #555;
@@ -231,41 +285,33 @@
   font-size: 14px;
 }
 
-.original-text {
-  background: #f5f5f5;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  padding: 12px;
-  margin-bottom: 20px;
-  color: #333;
-  font-size: 15px;
-  line-height: 1.5;
-}
-
-#edit-subtitle-input {
+.form-group input {
   width: 100%;
   padding: 12px;
   border: 2px solid #ddd;
   border-radius: 6px;
   font-size: 15px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  resize: vertical;
-  margin-bottom: 20px;
   outline: none;
   transition: border-color 0.2s;
 }
 
-#edit-subtitle-input:focus {
+.form-group input:focus {
   border-color: #667eea;
 }
 
-.edit-buttons {
+.form-group input[readonly] {
+  background: #f5f5f5;
+}
+
+.modal-buttons {
   display: flex;
   gap: 10px;
   justify-content: flex-end;
+  margin-top: 20px;
 }
 
-.edit-buttons button {
+.modal-buttons button {
   padding: 10px 20px;
   border: none;
   border-radius: 6px;
@@ -276,27 +322,27 @@
   outline: none;
 }
 
-.edit-buttons button.primary {
+.primary-btn {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
 }
 
-.edit-buttons button.primary:hover {
+.primary-btn:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
 }
 
-.edit-buttons button.secondary {
+.secondary-btn {
   background: #e0e0e0;
   color: #555;
 }
 
-.edit-buttons button.secondary:hover {
+.secondary-btn:hover {
   background: #d0d0d0;
 }
 
 /* Toast 提示 */
-.subtitle-toast {
+.stream-subtitle-toast {
   position: fixed;
   top: 80px;
   right: 20px;
@@ -314,7 +360,7 @@
   backdrop-filter: blur(10px);
 }
 
-.subtitle-toast.show {
+.stream-subtitle-toast.show {
   opacity: 1;
   transform: translateX(0);
 }
