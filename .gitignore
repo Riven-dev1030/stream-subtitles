@@ -1,0 +1,39 @@
+# API Keys and sensitive data
+*.key
+*.pem
+.env
+.env.local
+
+# Extension icons (user-generated)
+extension/icons/*.png
+extension/icons/*.jpg
+!extension/icons/README.md
+
+# Node modules (if added later)
+node_modules/
+package-lock.json
+yarn.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+*.zip
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
