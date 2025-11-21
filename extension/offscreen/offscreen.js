@@ -1,16 +1,20 @@
 // Stream Subtitles - Offscreen Document
-// 在 Manifest V3 中處理音訊擷取和 Deepgram 連線
+// 在 Manifest V3 中處理音訊擷取和語音辨識（使用 Web Speech API）
 
 let audioStream = null;
-let deepgramSocket = null;
-let mediaRecorder = null;
+let recognition = null;
 let isRecording = false;
 let audioContext = null;
 let audioSource = null;
-
-const DEEPGRAM_URL = 'wss://api.deepgram.com/v1/listen';
+let currentLanguage = 'en-US';
 
 console.log('[Offscreen] Offscreen document 已載入');
+
+// 檢查瀏覽器支援 Web Speech API
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!SpeechRecognition) {
+  console.error('[Offscreen] 瀏覽器不支援 Web Speech API');
+}
 
 // 監聽來自 background 的訊息
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -19,7 +23,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message.action) {
     case 'startCapture':
       console.log('[Offscreen] 收到 startCapture 請求，streamId:', message.streamId);
-      startCapture(message.streamId, message.apiKey, message.language, message.autoDetect, message.keywords)
+      startCapture(message.streamId, message.language, message.autoDetect)
         .then(() => {
           console.log('[Offscreen] startCapture 成功完成');
           sendResponse({ success: true });
@@ -42,7 +46,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // 開始擷取音訊
-async function startCapture(streamId, apiKey, language, autoDetect, keywords) {
+async function startCapture(streamId, language, autoDetect) {
   console.log('[Offscreen] 開始擷取音訊...');
 
   // 如果已經在錄音，先停止
@@ -51,6 +55,10 @@ async function startCapture(streamId, apiKey, language, autoDetect, keywords) {
   }
 
   try {
+    // 設定語言
+    currentLanguage = convertLanguageCode(language);
+    console.log('[Offscreen] 使用語言:', currentLanguage);
+
     // 使用 getUserMedia 搭配 chromeMediaSourceId 獲取音訊流
     console.log('[Offscreen] 嘗試獲取音訊流，stream ID:', streamId);
 
@@ -90,32 +98,54 @@ async function startCapture(streamId, apiKey, language, autoDetect, keywords) {
       console.warn('[Offscreen] 無法啟用音訊播放:', err);
     }
 
-    // 建立 MediaRecorder 來處理音訊資料
-    mediaRecorder = new MediaRecorder(audioStream, {
-      mimeType: 'audio/webm;codecs=opus'
-    });
+    // 初始化 Web Speech API
+    if (SpeechRecognition) {
+      recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = currentLanguage;
+      recognition.maxAlternatives = 1;
 
-    console.log('[Offscreen] MediaRecorder 已建立，state:', mediaRecorder.state);
+      // 當有辨識結果時
+      recognition.onresult = (event) => {
+        handleSpeechResult(event);
+      };
 
-    // 連接到 Deepgram
-    await connectToDeepgram(apiKey, language, autoDetect, keywords);
+      // 錯誤處理
+      recognition.onerror = (event) => {
+        console.error('[Offscreen] Speech Recognition 錯誤:', event.error);
 
-    // 當有音訊資料時，發送到 Deepgram
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0 && deepgramSocket && deepgramSocket.readyState === WebSocket.OPEN) {
-        deepgramSocket.send(event.data);
-      }
-    };
+        // 發送錯誤訊息到 background
+        chrome.runtime.sendMessage({
+          action: 'recognitionError',
+          error: event.error
+        }).catch(err => {
+          console.error('[Offscreen] 無法發送錯誤訊息:', err);
+        });
+      };
 
-    mediaRecorder.onerror = (event) => {
-      console.error('[Offscreen] MediaRecorder 錯誤:', event.error);
-    };
+      // 結束時自動重啟（保持持續辨識）
+      recognition.onend = () => {
+        console.log('[Offscreen] Speech Recognition 結束');
+        if (isRecording) {
+          console.log('[Offscreen] 自動重啟 Speech Recognition');
+          try {
+            recognition.start();
+          } catch (err) {
+            console.error('[Offscreen] 無法重啟 Speech Recognition:', err);
+          }
+        }
+      };
 
-    // 開始錄音（每 250ms 產生一塊資料）
-    mediaRecorder.start(250);
-    isRecording = true;
+      // 開始語音辨識
+      console.log('[Offscreen] 啟動 Speech Recognition');
+      recognition.start();
+      isRecording = true;
+    } else {
+      throw new Error('瀏覽器不支援 Web Speech API。請使用 Chrome 瀏覽器。');
+    }
 
-    console.log('[Offscreen] 開始錄音，MediaRecorder state:', mediaRecorder.state);
+    console.log('[Offscreen] 語音辨識已啟動');
 
   } catch (error) {
     console.error('[Offscreen] 擷取失敗:', error);
@@ -153,9 +183,14 @@ async function startCapture(streamId, apiKey, language, autoDetect, keywords) {
 function stopCapture() {
   console.log('[Offscreen] 停止擷取');
 
-  // 停止錄音
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
+  // 停止語音辨識
+  if (recognition) {
+    try {
+      recognition.stop();
+    } catch (err) {
+      console.error('[Offscreen] 停止 Speech Recognition 失敗:', err);
+    }
+    recognition = null;
   }
 
   // 停止音訊播放
@@ -175,106 +210,54 @@ function stopCapture() {
     audioStream = null;
   }
 
-  // 關閉 Deepgram 連線
-  if (deepgramSocket) {
-    deepgramSocket.close();
-    deepgramSocket = null;
-  }
-
   isRecording = false;
   console.log('[Offscreen] 已停止擷取');
 }
 
-// 連接到 Deepgram
-async function connectToDeepgram(apiKey, language, autoDetect, keywords) {
-  return new Promise((resolve, reject) => {
-    // 建構 WebSocket URL
-    let url = `${DEEPGRAM_URL}?encoding=opus&sample_rate=48000&channels=1`;
+// 處理語音辨識結果
+function handleSpeechResult(event) {
+  try {
+    // 取得最新的辨識結果
+    const lastResultIndex = event.results.length - 1;
+    const result = event.results[lastResultIndex];
 
-    // 語言設定
-    if (autoDetect) {
-      url += '&detect_language=true';
-    } else {
-      url += `&language=${language}`;
-    }
+    if (result && result[0]) {
+      const transcript = result[0].transcript;
+      const isFinal = result.isFinal;
+      const confidence = result[0].confidence;
 
-    // 其他參數
-    url += '&punctuate=true';
-    url += '&interim_results=true';
-    url += '&endpointing=300';
+      console.log('[Offscreen] 辨識結果:', transcript, isFinal ? '(final)' : '(interim)', 'confidence:', confidence);
 
-    // 加入 keywords
-    if (keywords && keywords.length > 0) {
-      keywords.forEach(keyword => {
-        url += `&keywords=${encodeURIComponent(keyword)}`;
+      // 發送字幕到 content script（透過 background）
+      chrome.runtime.sendMessage({
+        action: 'subtitle',
+        text: transcript,
+        isFinal: isFinal,
+        confidence: confidence
+      }).catch(err => {
+        console.error('[Offscreen] 無法發送字幕到 background:', err);
       });
-      console.log('[Offscreen] 已加入', keywords.length, '個 keywords');
     }
-
-    // 建立 WebSocket 連線
-    deepgramSocket = new WebSocket(url, ['token', apiKey]);
-
-    deepgramSocket.onopen = () => {
-      console.log('[Offscreen] Deepgram 連線成功');
-      resolve();
-    };
-
-    deepgramSocket.onerror = (error) => {
-      console.error('[Offscreen] Deepgram 錯誤:', error);
-      reject(new Error('Deepgram 連線失敗，請檢查 API key 是否正確'));
-    };
-
-    deepgramSocket.onclose = (event) => {
-      console.log('[Offscreen] Deepgram 連線關閉 - code:', event.code, 'reason:', event.reason);
-      if (event.code === 1008) {
-        console.error('[Offscreen] API key 可能無效或已過期');
-      }
-    };
-
-    deepgramSocket.onmessage = (event) => {
-      handleDeepgramMessage(event.data);
-    };
-  });
+  } catch (error) {
+    console.error('[Offscreen] 處理語音辨識結果失敗:', error);
+  }
 }
 
-// 處理 Deepgram 回應
-function handleDeepgramMessage(data) {
-  try {
-    const response = JSON.parse(data);
+// 轉換語言代碼（從簡短格式到 BCP 47 格式）
+function convertLanguageCode(langCode) {
+  const languageMap = {
+    'en': 'en-US',
+    'ja': 'ja-JP',
+    'zh-TW': 'zh-TW',
+    'zh': 'zh-CN',
+    'ko': 'ko-KR',
+    'es': 'es-ES',
+    'fr': 'fr-FR',
+    'de': 'de-DE',
+    'it': 'it-IT',
+    'pt': 'pt-BR',
+    'ru': 'ru-RU'
+  };
 
-    // 檢查是否有轉錄結果
-    if (response.channel && response.channel.alternatives && response.channel.alternatives.length > 0) {
-      const transcript = response.channel.alternatives[0].transcript;
-      const isFinal = response.is_final;
-
-      if (transcript) {
-        console.log('[Offscreen] 收到字幕:', transcript, isFinal ? '(final)' : '(interim)');
-
-        // 發送字幕到 content script（透過 background）
-        chrome.runtime.sendMessage({
-          action: 'subtitle',
-          text: transcript,
-          isFinal: isFinal
-        }).catch(err => {
-          console.error('[Offscreen] 無法發送字幕到 background:', err);
-        });
-      }
-    }
-
-    // 處理語言檢測結果
-    if (response.channel && response.channel.detected_language) {
-      const detectedLang = response.channel.detected_language;
-      console.log('[Offscreen] 偵測到語言:', detectedLang);
-
-      chrome.runtime.sendMessage({
-        action: 'languageDetected',
-        language: detectedLang
-      }).catch(err => {
-        console.error('[Offscreen] 無法發送語言檢測結果:', err);
-      });
-    }
-
-  } catch (error) {
-    console.error('[Offscreen] 解析 Deepgram 回應失敗:', error, 'data:', data);
-  }
+  return languageMap[langCode] || 'en-US';
 }

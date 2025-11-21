@@ -478,13 +478,61 @@ kbd {
   text-decoration: underline;
 }
 
-/* API 已設定狀態 */
+/* API 已設定狀態 / Web Speech API 資訊 */
 .api-status {
   display: block;
 }
 
 .api-status.hidden {
   display: none;
+}
+
+/* Web Speech API 資訊框 */
+.api-info-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  background: #e7f5ff;
+  border: 1px solid #74c0fc;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.info-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.info-content {
+  flex: 1;
+}
+
+.info-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1971c2;
+  margin-bottom: 4px;
+}
+
+.info-description {
+  font-size: 12px;
+  color: #495057;
+  line-height: 1.4;
+}
+
+/* 注意事項框 */
+.note-box {
+  padding: 10px 12px;
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 6px;
+}
+
+.note-text {
+  font-size: 11px;
+  color: #856404;
+  line-height: 1.5;
 }
 
 .api-key-display {

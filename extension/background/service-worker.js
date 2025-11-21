@@ -1,23 +1,12 @@
 // Stream Subtitles - Background Service Worker (Manifest V3)
-// 使用 Offscreen Document API 處理音訊擷取和 Deepgram 連線
+// 使用 Offscreen Document API 處理音訊擷取和語音辨識
 
 let isRecording = false;
 let currentLanguage = 'en'; // 預設英文
 let autoDetect = false;
-let cachedApiKey = null; // 快取 API key
-let customKeywords = []; // 自訂 keywords
+let customKeywords = []; // 自訂 keywords（保留以供未來使用）
 
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen/offscreen.html';
-
-// 載入 API key
-async function loadApiKey() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(['deepgramApiKey'], (result) => {
-      cachedApiKey = result.deepgramApiKey || null;
-      resolve(cachedApiKey);
-    });
-  });
-}
 
 // 確保 offscreen document 存在
 async function setupOffscreenDocument() {
@@ -73,8 +62,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({
         isRecording,
         currentLanguage,
-        autoDetect,
-        hasApiKey: !!cachedApiKey
+        autoDetect
       });
       break;
 
@@ -83,18 +71,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ success: true });
       break;
 
-    case 'reloadApiKey':
-      loadApiKey().then((key) => {
-        console.log('[Background] API key 已重新載入:', key ? '有 key' : '無 key');
-        sendResponse({ success: true, hasApiKey: !!key });
-      });
-      return true; // 保持訊息通道開啟
-
     // 從 offscreen document 轉發字幕到 content script
     case 'subtitle':
       notifyContentScript('subtitle', {
         text: message.text,
         isFinal: message.isFinal,
+        confidence: message.confidence,
         language: currentLanguage
       });
       break;
@@ -107,6 +89,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
       break;
 
+    // 處理語音辨識錯誤
+    case 'recognitionError':
+      console.error('[Background] Speech Recognition 錯誤:', message.error);
+      notifyContentScript('recognitionError', {
+        error: message.error
+      });
+      break;
+
     default:
       sendResponse({ success: false, error: 'Unknown action' });
   }
@@ -115,14 +105,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // 開始擷取音訊
 async function startCapture(streamId, language = 'en', autoDetectMode = false) {
   console.log('[Background] 開始擷取音訊，stream ID:', streamId);
-
-  // 載入 API key
-  const apiKey = await loadApiKey();
-
-  // 檢查 API key
-  if (!apiKey) {
-    throw new Error('請先設定 Deepgram API key！請到擴充功能設定中輸入你的 API key。');
-  }
 
   // 檢查 stream ID
   if (!streamId) {
@@ -151,7 +133,6 @@ async function startCapture(streamId, language = 'en', autoDetectMode = false) {
     const response = await chrome.runtime.sendMessage({
       action: 'startCapture',
       streamId: streamId,
-      apiKey: apiKey,
       language: currentLanguage,
       autoDetect: autoDetect,
       keywords: customKeywords
@@ -266,46 +247,17 @@ chrome.runtime.onInstalled.addListener((details) => {
     }
   });
 
-  // 載入 API key（如果存在）
-  loadApiKey().then((key) => {
-    if (key) {
-      console.log('[Background] 已找到儲存的 API key');
-    } else {
-      console.log('[Background] 未找到 API key，請到設定中輸入');
-    }
-  });
+  console.log('[Background] 使用 Web Speech API（瀏覽器內建）');
 });
 
-// 從修正記錄更新 keywords
+// 從修正記錄更新 keywords（保留以供未來使用）
 function updateKeywordsFromCorrections(corrections) {
   console.log('[Background] 更新 keywords，共', corrections.length, '筆修正');
 
-  // 轉換為 Deepgram keywords 格式
-  // 格式：word:boost_value（boost 值 1-10，建議 2-3）
-  customKeywords = corrections
-    .filter(c => c.count >= 1) // 至少出現 1 次
-    .map(c => {
-      // 根據出現次數決定 boost 值
-      const boost = Math.min(3, 1 + Math.floor(c.count / 2));
-      return `${c.correct}:${boost}`;
-    });
+  // 暫時保存，未來可用於改進辨識
+  customKeywords = corrections.map(c => c.correct);
 
-  console.log('[Background] 已產生', customKeywords.length, '個 keywords:', customKeywords);
-
-  // 如果正在錄音，需要重新連線才能套用新的 keywords
-  if (isRecording) {
-    console.log('[Background] 偵測到正在錄音，重新連線以套用 keywords...');
-    const wasRecording = isRecording;
-    stopCapture();
-
-    setTimeout(() => {
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs[0] && wasRecording) {
-          startCapture(tabs[0].id, currentLanguage, autoDetect);
-        }
-      });
-    }, 500);
-  }
+  console.log('[Background] 已儲存', customKeywords.length, '個關鍵字');
 }
 
 // 載入自訂 keywords
@@ -317,10 +269,8 @@ function loadCustomKeywords() {
   });
 }
 
-// Service worker 啟動時載入 API key 和 keywords
-loadApiKey().then((key) => {
-  console.log('[Background] Service worker 已載入', key ? '(有 API key)' : '(無 API key)');
-});
+// Service worker 啟動時載入 keywords
+console.log('[Background] Service worker 已載入（使用 Web Speech API）');
 
 // 啟動時載入 keywords
 loadCustomKeywords();
