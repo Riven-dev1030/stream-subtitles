@@ -56,8 +56,10 @@ async function startCapture(streamId, apiKey, language, autoDetect, keywords) {
 
     audioStream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        chromeMediaSource: 'tab',
-        chromeMediaSourceId: streamId
+        mandatory: {
+          chromeMediaSource: 'tab',
+          chromeMediaSourceId: streamId
+        }
       }
     });
 
