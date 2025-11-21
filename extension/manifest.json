@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Stream Subtitles",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "即時字幕產生器 - 支援英文、日文、繁體中文",
   "permissions": [
     "tabCapture",
     "activeTab",
+    "tabs",
     "storage",
     "scripting",
     "offscreen"

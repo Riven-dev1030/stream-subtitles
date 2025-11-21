@@ -136,20 +136,35 @@ function startRecording() {
 
   // 取得當前分頁
   chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-    if (tabs[0]) {
-      try {
-        // 在 popup 中獲取 stream ID（需要用戶手勢上下文）
-        console.log('[Popup] 獲取 stream ID...');
-        const streamId = await chrome.tabCapture.getMediaStreamId({
-          targetTabId: tabs[0].id
-        });
+    if (!tabs || tabs.length === 0) {
+      alert('❌ 無法找到當前分頁');
+      return;
+    }
 
-        console.log('[Popup] 已獲取 stream ID:', streamId);
+    const tab = tabs[0];
+    console.log('[Popup] 當前分頁 ID:', tab.id, 'URL:', tab.url);
 
-        if (!streamId) {
-          alert('❌ 無法獲取音訊權限\n\n請確認：\n1. 您已允許擷取分頁音訊\n2. 分頁有正在播放音訊');
-          return;
-        }
+    // 檢查是否為 Chrome 內部頁面
+    if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://'))) {
+      alert('❌ 無法擷取 Chrome 內部頁面\n\n請在一般網頁（如 YouTube、Netflix）上使用此功能。');
+      return;
+    }
+
+    try {
+      // 在 popup 中獲取 stream ID（需要用戶手勢上下文）
+      console.log('[Popup] 獲取 stream ID，targetTabId:', tab.id);
+
+      const streamId = await chrome.tabCapture.getMediaStreamId({
+        targetTabId: tab.id
+      });
+
+      console.log('[Popup] 已獲取 stream ID:', streamId);
+
+      if (!streamId || streamId === '') {
+        console.error('[Popup] stream ID 為空');
+        alert('❌ 無法獲取音訊權限\n\n可能原因：\n1. 分頁沒有正在播放音訊\n2. 瀏覽器已阻止權限請求\n3. 請重新整理分頁後再試\n\n提示：請確保分頁有音訊正在播放。');
+        return;
+      }
 
         // 將 stream ID 傳給 background
         chrome.runtime.sendMessage({
