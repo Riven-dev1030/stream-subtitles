@@ -5,6 +5,8 @@ let audioStream = null;
 let deepgramSocket = null;
 let mediaRecorder = null;
 let isRecording = false;
+let audioContext = null;
+let audioSource = null;
 
 const DEEPGRAM_URL = 'wss://api.deepgram.com/v1/listen';
 
@@ -45,21 +47,33 @@ async function startCapture(streamId, apiKey, language, autoDetect, keywords) {
 
   try {
     // 使用 getUserMedia 搭配 chromeMediaSourceId 獲取音訊流
+    console.log('[Offscreen] 嘗試獲取音訊流，stream ID:', streamId);
+
     audioStream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        mandatory: {
-          chromeMediaSource: 'tab',
-          chromeMediaSourceId: streamId
-        }
+        chromeMediaSource: 'tab',
+        chromeMediaSourceId: streamId
       }
     });
 
-    console.log('[Offscreen] 音訊流已建立');
+    console.log('[Offscreen] 音訊流已建立，tracks:', audioStream.getTracks().length);
+
+    // 創建 AudioContext 來播放音訊（否則用戶會聽不到聲音）
+    try {
+      audioContext = new AudioContext();
+      audioSource = audioContext.createMediaStreamSource(audioStream);
+      audioSource.connect(audioContext.destination);
+      console.log('[Offscreen] 音訊播放已啟用');
+    } catch (err) {
+      console.warn('[Offscreen] 無法啟用音訊播放:', err);
+    }
 
     // 建立 MediaRecorder 來處理音訊資料
     mediaRecorder = new MediaRecorder(audioStream, {
       mimeType: 'audio/webm;codecs=opus'
     });
+
+    console.log('[Offscreen] MediaRecorder 已建立，state:', mediaRecorder.state);
 
     // 連接到 Deepgram
     await connectToDeepgram(apiKey, language, autoDetect, keywords);
@@ -71,11 +85,15 @@ async function startCapture(streamId, apiKey, language, autoDetect, keywords) {
       }
     };
 
+    mediaRecorder.onerror = (event) => {
+      console.error('[Offscreen] MediaRecorder 錯誤:', event.error);
+    };
+
     // 開始錄音（每 250ms 產生一塊資料）
     mediaRecorder.start(250);
     isRecording = true;
 
-    console.log('[Offscreen] 開始錄音');
+    console.log('[Offscreen] 開始錄音，MediaRecorder state:', mediaRecorder.state);
 
   } catch (error) {
     console.error('[Offscreen] 擷取失敗:', error);
@@ -92,6 +110,17 @@ function stopCapture() {
     mediaRecorder.stop();
   }
 
+  // 停止音訊播放
+  if (audioSource) {
+    audioSource.disconnect();
+    audioSource = null;
+  }
+
+  if (audioContext && audioContext.state !== 'closed') {
+    audioContext.close();
+    audioContext = null;
+  }
+
   // 關閉音訊流
   if (audioStream) {
     audioStream.getTracks().forEach(track => track.stop());
@@ -105,6 +134,7 @@ function stopCapture() {
   }
 
   isRecording = false;
+  console.log('[Offscreen] 已停止擷取');
 }
 
 // 連接到 Deepgram
@@ -143,11 +173,14 @@ async function connectToDeepgram(apiKey, language, autoDetect, keywords) {
 
     deepgramSocket.onerror = (error) => {
       console.error('[Offscreen] Deepgram 錯誤:', error);
-      reject(new Error('Deepgram 連線失敗'));
+      reject(new Error('Deepgram 連線失敗，請檢查 API key 是否正確'));
     };
 
     deepgramSocket.onclose = (event) => {
-      console.log('[Offscreen] Deepgram 連線關閉:', event.code, event.reason);
+      console.log('[Offscreen] Deepgram 連線關閉 - code:', event.code, 'reason:', event.reason);
+      if (event.code === 1008) {
+        console.error('[Offscreen] API key 可能無效或已過期');
+      }
     };
 
     deepgramSocket.onmessage = (event) => {
@@ -167,11 +200,15 @@ function handleDeepgramMessage(data) {
       const isFinal = response.is_final;
 
       if (transcript) {
+        console.log('[Offscreen] 收到字幕:', transcript, isFinal ? '(final)' : '(interim)');
+
         // 發送字幕到 content script（透過 background）
         chrome.runtime.sendMessage({
           action: 'subtitle',
           text: transcript,
           isFinal: isFinal
+        }).catch(err => {
+          console.error('[Offscreen] 無法發送字幕到 background:', err);
         });
       }
     }
@@ -184,10 +221,12 @@ function handleDeepgramMessage(data) {
       chrome.runtime.sendMessage({
         action: 'languageDetected',
         language: detectedLang
+      }).catch(err => {
+        console.error('[Offscreen] 無法發送語言檢測結果:', err);
       });
     }
 
   } catch (error) {
-    console.error('[Offscreen] 解析 Deepgram 回應失敗:', error);
+    console.error('[Offscreen] 解析 Deepgram 回應失敗:', error, 'data:', data);
   }
 }
