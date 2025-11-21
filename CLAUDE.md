@@ -20,23 +20,33 @@ This document provides comprehensive guidance for AI assistants working with the
 ## Project Overview
 
 ### Purpose
-The `stream-subtitles` project handles real-time subtitle generation, processing, and/or streaming for video content.
+The `stream-subtitles` project is a **Chrome Extension** that provides real-time subtitle generation for web-based video and audio content using voice recognition.
 
 ### Tech Stack
-*[To be updated as project develops]*
 
-**Expected components:**
-- Language/Runtime: [e.g., Node.js, Python, Go]
-- Frameworks: [e.g., Express, FastAPI, etc.]
-- Subtitle formats: [e.g., SRT, WebVTT, ASS]
-- Streaming protocols: [e.g., WebSocket, HLS, RTMP]
-- Dependencies: [List major dependencies]
+**Platform:**
+- Chrome Extension (Manifest V3)
+- Vanilla JavaScript (no build tools)
+
+**APIs & Services:**
+- **Deepgram API** - Real-time speech recognition via WebSocket
+- **Chrome Extensions APIs:**
+  - `chrome.tabCapture` - Audio capture from browser tabs
+  - `chrome.storage` - Settings and learning data persistence
+  - `chrome.runtime` - Message passing between components
+
+**Web APIs:**
+- MediaRecorder API - Audio stream processing
+- WebSocket - Real-time communication with Deepgram
 
 ### Project Goals
-- Real-time subtitle generation and/or processing
-- Support for multiple subtitle formats
-- Stream integration capabilities
-- [Add specific goals as they become clear]
+- ✅ Real-time subtitle generation with <400ms latency
+- ✅ Multi-language support (English, Japanese, Traditional Chinese)
+- ✅ Automatic language detection
+- ✅ Keywords learning system for improved accuracy on proper nouns
+- ✅ User-friendly overlay interface
+- 🚧 Subtitle export (planned)
+- 🚧 Advanced learning features (planned)
 
 ---
 
@@ -44,38 +54,68 @@ The `stream-subtitles` project handles real-time subtitle generation, processing
 
 ```
 stream-subtitles/
-├── src/                    # Source code
-│   ├── core/              # Core subtitle processing logic
-│   ├── stream/            # Streaming integration
-│   ├── formats/           # Subtitle format parsers/generators
-│   ├── utils/             # Utility functions
-│   └── api/               # API endpoints (if applicable)
-├── tests/                 # Test files
-│   ├── unit/              # Unit tests
-│   ├── integration/       # Integration tests
-│   └── fixtures/          # Test data and fixtures
-├── docs/                  # Documentation
-├── scripts/               # Build and deployment scripts
-├── config/                # Configuration files
-└── examples/              # Usage examples
-
-*[Update this structure as the actual codebase develops]*
+├── extension/                     # Chrome Extension source code
+│   ├── manifest.json             # Extension configuration (Manifest V3)
+│   ├── background/
+│   │   └── service-worker.js    # Background service worker
+│   │                             # - Audio capture (tabCapture API)
+│   │                             # - Deepgram WebSocket connection
+│   │                             # - Keywords management
+│   ├── content/
+│   │   └── content.js           # Content script injected into pages
+│   │                             # - Subtitle overlay UI
+│   │                             # - Edit modal for corrections
+│   │                             # - Toast notifications
+│   ├── popup/
+│   │   ├── popup.html           # Extension popup UI
+│   │   ├── popup.css            # Popup styles
+│   │   └── popup.js             # Popup logic
+│   │                             # - Language selection
+│   │                             # - Corrections management
+│   │                             # - Settings interface
+│   ├── styles/
+│   │   └── content.css          # Content script styles
+│   │                             # - Subtitle overlay styles
+│   │                             # - Edit modal styles
+│   │                             # - Toast styles
+│   ├── icons/                   # Extension icons (16, 32, 48, 128)
+│   │   └── README.md            # Icon generation guide
+│   └── utils/                   # Utility modules (future)
+│
+├── tools/
+│   └── generate-icons.html      # Icon generator tool
+│
+├── README.md                     # User-facing documentation
+├── QUICKSTART.md                 # Quick start guide
+├── CLAUDE.md                     # This file - AI assistant guide
+└── .gitignore                    # Git ignore rules
 ```
 
-### Key Directories
+### Key Components
 
-**`src/`**
-- Main application source code
-- Organized by feature/domain
+**`extension/background/service-worker.js`**
+- Manages audio capture from browser tabs
+- Establishes and maintains WebSocket connection to Deepgram
+- Converts corrections into Deepgram keywords
+- Handles inter-component messaging
 
-**`tests/`**
-- All test files mirror the `src/` structure
-- Use descriptive test names that explain the behavior being tested
+**`extension/content/content.js`**
+- Injects subtitle overlay UI into web pages
+- Displays real-time subtitles with edit capability
+- Manages correction modal and user interactions
+- Stores subtitle history and corrections
 
-**`docs/`**
-- API documentation
-- Architecture diagrams
-- Setup guides
+**`extension/popup/`**
+- User interface for extension settings
+- Displays and manages correction history
+- Language selection and status display
+- Keyboard shortcuts reference
+
+**`extension/styles/content.css`**
+- Styles for subtitle overlay (z-index: 999998)
+- Edit modal styles (z-index: 9999999)
+- Toast notification animations
+- Responsive design for mobile
 
 ---
 
@@ -291,30 +331,201 @@ describe('SubtitleParser', () => {
 
 ## Common Tasks
 
-### Adding a New Subtitle Format
+### Adding Support for a New Language
 
-1. Create parser in `src/formats/<format-name>-parser.js`
-2. Create generator in `src/formats/<format-name>-generator.js`
-3. Implement format validation
-4. Add comprehensive tests with sample files
-5. Update documentation
-6. Register format in the main format registry
+1. **Update language constants** in `content.js`:
+   ```javascript
+   const languages = {
+     // ... existing
+     de: { code: 'de', name: 'Deutsch', flag: '🇩🇪' }
+   };
+   ```
 
-### Debugging Subtitle Sync Issues
+2. **Add language button** in `popup.html`:
+   ```html
+   <button class="lang-btn" data-lang="de">
+     <span class="flag">🇩🇪</span>
+     <span class="lang-name">Deutsch</span>
+   </button>
+   ```
 
-1. Check timestamp parsing logic
-2. Verify timestamp calculations
-3. Test with various video frame rates
-4. Check for rounding errors in time conversions
-5. Validate against reference implementations
+3. **Update language mapping** in `popup.js`:
+   ```javascript
+   function getLanguageName(langCode) {
+     const names = {
+       // ... existing
+       'de': 'DE'
+     };
+   }
+   ```
+
+4. Test with German audio content
+
+### Working with Keywords Learning Feature
+
+**Architecture Overview:**
+```
+User corrects subtitle → Storage → Background generates keywords → Deepgram
+    (content.js)      (Chrome API)  (service-worker.js)        (WebSocket)
+```
+
+**Storage Format:**
+```javascript
+{
+  corrections: [
+    {
+      wrong: "communities",     // What Deepgram said
+      correct: "Kubernetes",    // What it should be
+      count: 3,                 // Times this correction appeared
+      language: "en",           // Language code
+      createdAt: "2025-11-21T...",
+      lastSeen: "2025-11-21T..."
+    }
+  ]
+}
+```
+
+**Keywords Generation Logic:**
+- Corrections are converted to Deepgram keywords format
+- Boost value ranges from 1-3 based on occurrence count
+- Formula: `boost = min(3, 1 + floor(count / 2))`
+- Example: `"Kubernetes:2"` (appears 1-3 times, boost=2)
+
+**Adding New Learning Features:**
+
+1. **Auto-apply threshold**: Modify `service-worker.js`
+   ```javascript
+   customKeywords = corrections
+     .filter(c => c.count >= 3)  // Change threshold here
+     .map(c => `${c.correct}:${calculateBoost(c.count)}`);
+   ```
+
+2. **Custom boost logic**: Update boost calculation
+   ```javascript
+   function calculateBoost(count) {
+     if (count >= 10) return 5;  // Very frequent
+     if (count >= 5) return 3;
+     return 2;
+   }
+   ```
+
+3. **Context-aware keywords**: Add context analysis
+   ```javascript
+   corrections.push({
+     wrong: "communities",
+     correct: "Kubernetes",
+     context: "I love",  // Words before/after
+     count: 1
+   });
+   ```
+
+### Debugging Speech Recognition Issues
+
+**Problem: Low accuracy for specific terms**
+
+1. Check if terms are in correction history:
+   ```javascript
+   chrome.storage.sync.get(['corrections'], result => {
+     console.log(result.corrections);
+   });
+   ```
+
+2. Verify keywords are being sent to Deepgram:
+   - Open background service worker console
+   - Check for log: `[Background] 已加入 X 個 keywords`
+
+3. Monitor WebSocket URL:
+   ```javascript
+   // In service-worker.js, add logging
+   console.log('[Background] WebSocket URL:', url);
+   // Should see: &keywords=Kubernetes:2&keywords=...
+   ```
+
+**Problem: Keywords not updating**
+
+1. Check if `updateCorrections` message handler is working:
+   ```javascript
+   // In service-worker.js
+   case 'updateCorrections':
+     console.log('[Background] Updating keywords...');
+     updateKeywordsFromCorrections(message.corrections);
+     break;
+   ```
+
+2. Verify auto-reconnect is triggered:
+   - Keywords only apply on new connection
+   - Stop and restart recording to apply changes
 
 ### Performance Optimization
 
-1. Profile the application to identify bottlenecks
-2. Consider streaming/chunking for large subtitle files
-3. Cache parsed subtitles when appropriate
-4. Optimize regex patterns in parsers
-5. Use efficient data structures
+**Current Performance:**
+- Audio capture: ~10ms
+- Network latency: ~50-100ms
+- Deepgram recognition: ~100-200ms
+- UI rendering: ~10ms
+- **Total latency: ~200-400ms**
+
+**Optimization Strategies:**
+
+1. **Reduce WebSocket overhead**:
+   ```javascript
+   // In service-worker.js
+   mediaRecorder.start(250);  // Adjust chunk size (default: 250ms)
+   ```
+
+2. **Optimize subtitle display**:
+   ```javascript
+   // Use requestAnimationFrame for smooth updates
+   function displaySubtitle(text, isFinal) {
+     requestAnimationFrame(() => {
+       subtitleText.textContent = text;
+     });
+   }
+   ```
+
+3. **Limit correction history**:
+   ```javascript
+   // In content.js
+   if (subtitleHistory.length > 50) {  // Adjust limit
+     subtitleHistory.shift();
+   }
+   ```
+
+### Testing the Extension
+
+**Manual Testing Checklist:**
+
+1. **Basic Functionality:**
+   - [ ] Extension loads without errors
+   - [ ] Popup opens and displays correctly
+   - [ ] Can start/stop recording
+   - [ ] Subtitles appear on page
+   - [ ] Language switching works
+
+2. **Keywords Learning:**
+   - [ ] Edit button appears on subtitles
+   - [ ] Edit modal opens and saves
+   - [ ] Corrections appear in popup
+   - [ ] Keywords are applied on restart
+   - [ ] Accuracy improves after corrections
+
+3. **Edge Cases:**
+   - [ ] Empty subtitle handling
+   - [ ] Very long subtitles (>200 chars)
+   - [ ] Rapid language switching
+   - [ ] Multiple tabs with extension active
+   - [ ] Page refresh during recording
+
+**Console Logging:**
+```javascript
+// Check these logs in order
+[Content] Content script 載入完成
+[Background] Service worker 已載入
+[Background] 開始擷取音訊...
+[Background] Deepgram 連線成功
+[Background] 已加入 N 個 keywords
+[Content] 收到訊息: subtitle
+```
 
 ---
 
@@ -322,28 +533,130 @@ describe('SubtitleParser', () => {
 
 ### Common Issues
 
-**Problem: Timestamps are off-sync**
-- Check video frame rate assumptions
-- Verify timestamp format parsing
-- Look for rounding errors in conversions
+**Problem: No subtitles appearing**
 
-**Problem: Special characters not displaying correctly**
-- Verify UTF-8 encoding is being used
-- Check BOM handling
-- Validate character encoding in subtitle files
+**Symptoms:** Extension loaded, recording started, but no subtitles show
 
-**Problem: Parser failing on valid files**
-- Check for format variations (e.g., different line endings)
-- Validate against format specifications
-- Add more lenient parsing where appropriate
+**Solutions:**
+1. Check Deepgram API key is set in `service-worker.js`
+2. Open browser console (F12) and check for errors
+3. Verify audio is playing (check system sound mixer)
+4. Check browser permissions for the extension
+5. Try reloading the extension: chrome://extensions/ → reload button
+
+**Problem: Subtitles are very inaccurate**
+
+**Symptoms:** Getting wrong words consistently
+
+**Solutions:**
+1. Select correct language (not AUTO mode)
+2. Use keywords learning feature:
+   - Click ✏️ on wrong subtitles
+   - Correct them 2-3 times
+   - Restart recording to apply keywords
+3. Check audio quality (reduce background noise)
+4. Verify language selection matches audio content
+
+**Problem: High latency (>2 seconds)**
+
+**Symptoms:** Subtitles appear long after speech
+
+**Solutions:**
+1. Check network connection speed
+2. Disable AUTO language detection (use specific language)
+3. Clear browser cache and cookies
+4. Reduce number of active keywords (<50 recommended)
+5. Check Deepgram API status
+
+**Problem: Extension crashes or freezes**
+
+**Symptoms:** UI unresponsive, no new subtitles
+
+**Solutions:**
+1. Check browser console for JavaScript errors
+2. Verify Chrome is updated to latest version
+3. Disable other extensions that modify pages
+4. Clear extension storage:
+   ```javascript
+   chrome.storage.sync.clear();
+   chrome.storage.local.clear();
+   ```
+5. Reload the extension
+
+**Problem: Keywords not improving accuracy**
+
+**Symptoms:** Corrected terms still recognized incorrectly
+
+**Solutions:**
+1. Verify corrections are saved (check popup → 學習記錄)
+2. **IMPORTANT:** Stop and restart recording after corrections
+3. Check background console logs for keyword loading
+4. Ensure at least 1-2 corrections for the term
+5. Try increasing boost value manually in `service-worker.js`
+
+**Problem: Edit modal doesn't appear**
+
+**Symptoms:** Clicking ✏️ button does nothing
+
+**Solutions:**
+1. Check browser console for errors
+2. Verify `content.css` is loaded
+3. Check z-index conflicts with page styles
+4. Try on different website
+5. Reload extension and page
 
 ### Debug Mode
 
-*[Add instructions for enabling debug mode]*
+**Enable verbose logging:**
 
-### Logging
+1. **Background Service Worker:**
+   ```javascript
+   // Add at top of service-worker.js
+   const DEBUG = true;
 
-*[Add information about logging configuration and levels]*
+   function log(...args) {
+     if (DEBUG) console.log('[Background-DEBUG]', ...args);
+   }
+   ```
+
+2. **Content Script:**
+   ```javascript
+   // Add at top of content.js
+   const DEBUG = true;
+
+   function log(...args) {
+     if (DEBUG) console.log('[Content-DEBUG]', ...args);
+   }
+   ```
+
+3. **Monitor all events:**
+   - Open chrome://extensions/
+   - Find Stream Subtitles
+   - Click "service worker" link (background console)
+   - Open page console (F12) for content script logs
+
+### Performance Monitoring
+
+**Check latency:**
+```javascript
+// Add to service-worker.js
+deepgramSocket.onmessage = (event) => {
+  const receiveTime = Date.now();
+  const response = JSON.parse(event.data);
+  const latency = receiveTime - lastSentTime;
+  console.log('[Latency]', latency, 'ms');
+  handleDeepgramMessage(event.data);
+};
+```
+
+**Monitor memory usage:**
+```javascript
+// In content.js
+setInterval(() => {
+  console.log('[Memory] Subtitle history:', subtitleHistory.length);
+  console.log('[Memory] Corrections:', corrections.length);
+}, 10000);
+```
 
 ---
 
@@ -395,46 +708,66 @@ Before committing changes, verify:
 6. Review recent commits and PRs for context
 
 **Key questions to answer:**
-- What subtitle formats are currently supported?
-- How are timestamps represented internally?
-- What are the main APIs/interfaces?
-- How is error handling done?
-- What are the performance characteristics?
+- How does audio capture work? (chrome.tabCapture API)
+- How is the WebSocket connection managed? (Background service worker)
+- How are subtitles displayed? (Content script injection)
+- How does keywords learning work? (Chrome storage + Deepgram keywords parameter)
+- What is the message flow? (Background ↔ Content ↔ Popup)
+- How are corrections persisted? (chrome.storage.sync for corrections, .local for history)
 
 ---
 
 ## Additional Resources
 
-### Subtitle Format Specifications
+### API Documentation
 
-- **SRT (SubRip)**: [Link to specification]
-- **WebVTT**: https://w3c.github.io/webvtt/
-- **ASS/SSA**: [Link to specification]
-- **TTML**: https://www.w3.org/TR/ttml/
+- **Deepgram API**: https://developers.deepgram.com/
+  - Real-time streaming: https://developers.deepgram.com/docs/streaming
+  - Keywords feature: https://developers.deepgram.com/docs/keywords
+  - Language codes: https://developers.deepgram.com/docs/language
+
+- **Chrome Extensions APIs**:
+  - Manifest V3: https://developer.chrome.com/docs/extensions/mv3/
+  - chrome.tabCapture: https://developer.chrome.com/docs/extensions/reference/tabCapture/
+  - chrome.storage: https://developer.chrome.com/docs/extensions/reference/storage/
+  - Service Workers: https://developer.chrome.com/docs/extensions/mv3/service_workers/
 
 ### Related Projects
 
-*[Add links to related projects, libraries, or tools]*
+- **Web Speech API** (alternative): https://developer.mozilla.org/en-US/docs/Web/API/Web_Speech_API
+- **MediaRecorder API**: https://developer.mozilla.org/en-US/docs/Web/API/MediaRecorder
 
-### Documentation
+### Learning Resources
 
-*[Add links to additional documentation]*
+- Chrome Extension development: https://developer.chrome.com/docs/extensions/
+- WebSocket programming: https://developer.mozilla.org/en-US/docs/Web/API/WebSocket
+- Real-time audio processing: https://developer.mozilla.org/en-US/docs/Web/API/Web_Audio_API
 
 ---
 
 ## Maintenance Notes
 
 **Last Updated**: 2025-11-21
-**Maintainer**: [To be assigned]
+**Current Version**: 1.0.0 (with Keywords Learning Feature)
+
+### Recent Updates
+
+**2025-11-21:**
+- ✅ Added Keywords Learning Feature (basic version)
+- ✅ Updated project structure documentation
+- ✅ Added troubleshooting guide for actual issues
+- ✅ Documented keywords generation logic
+- ✅ Added testing checklist
 
 ### Update Checklist
 
 This document should be updated when:
-- [ ] New features are added
-- [ ] Development workflow changes
-- [ ] New conventions are established
+- [x] New features are added → Keywords Learning Feature documented
+- [x] Development workflow changes → Updated for Chrome Extension workflow
+- [x] New conventions are established → Added keywords boost logic
 - [ ] Dependencies change significantly
-- [ ] Deployment process changes
+- [ ] New languages are supported
+- [ ] Performance optimizations are implemented
 
 ---
 
