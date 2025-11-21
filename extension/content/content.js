@@ -336,11 +336,30 @@ function displaySubtitle(text, isFinal) {
     currentSubtitle = text;
     interimSubtitle = '';
 
+    // 檢查是否和最後一句重複（避免 API 重複發送）
+    if (displayBuffer.length > 0) {
+      const lastText = displayBuffer[displayBuffer.length - 1].text;
+      if (lastText === text || text.startsWith(lastText)) {
+        // 重複的內容，忽略
+        console.log('[Content] 偵測到重複內容，跳過');
+        return;
+      }
+    }
+
     // 智能斷句 - 將長文字切分成多句
     const sentences = smartSplit(text);
 
     // 將所有句子加入緩衝區
     sentences.forEach(sentence => {
+      // 再次檢查是否和最後一句重複
+      if (displayBuffer.length > 0) {
+        const lastText = displayBuffer[displayBuffer.length - 1].text;
+        if (lastText === sentence) {
+          console.log('[Content] 偵測到重複句子，跳過:', sentence);
+          return;
+        }
+      }
+
       displayBuffer.push({
         text: sentence,
         timestamp: Date.now()
@@ -386,14 +405,25 @@ function displaySubtitle(text, isFinal) {
         // 前半部分作為完整句子
         const completedPart = text.slice(0, splitPoint).trim();
         if (completedPart) {
-          displayBuffer.push({
-            text: completedPart,
-            timestamp: Date.now()
-          });
+          // 檢查是否和最後一句重複
+          let isDuplicate = false;
+          if (displayBuffer.length > 0) {
+            const lastText = displayBuffer[displayBuffer.length - 1].text;
+            if (lastText === completedPart) {
+              isDuplicate = true;
+            }
+          }
 
-          // 限制緩衝區大小
-          while (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
-            displayBuffer.shift();
+          if (!isDuplicate) {
+            displayBuffer.push({
+              text: completedPart,
+              timestamp: Date.now()
+            });
+
+            // 限制緩衝區大小
+            while (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
+              displayBuffer.shift();
+            }
           }
         }
 
