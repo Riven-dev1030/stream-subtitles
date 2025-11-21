@@ -113,7 +113,7 @@ function startRecording() {
   console.log('[Popup] 開始錄音');
 
   // 取得當前分頁
-  chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (!tabs || tabs.length === 0) {
       alert('❌ 無法找到當前分頁');
       return;
@@ -124,63 +124,30 @@ function startRecording() {
 
     // 檢查是否為 Chrome 內部頁面
     if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://'))) {
-      alert('❌ 無法擷取 Chrome 內部頁面\n\n請在一般網頁（如 YouTube、Netflix）上使用此功能。');
+      alert('❌ 無法在 Chrome 內部頁面使用\n\n請在一般網頁（如 YouTube、Netflix）上使用此功能。');
       return;
     }
 
-    try {
-      // 在 popup 中獲取 stream ID（需要用戶手勢上下文）
-      console.log('[Popup] 獲取 stream ID，targetTabId:', tab.id);
-
-      const streamId = await chrome.tabCapture.getMediaStreamId({
-        targetTabId: tab.id
-      });
-
-      console.log('[Popup] 已獲取 stream ID:', streamId);
-
-      if (!streamId || streamId === '') {
-        console.error('[Popup] stream ID 為空');
-        alert('❌ 無法獲取音訊權限\n\n可能原因：\n1. 分頁沒有正在播放音訊\n2. 瀏覽器已阻止權限請求\n3. 請重新整理分頁後再試\n\n提示：請確保分頁有音訊正在播放。');
+    // 直接發送訊息給 content script 開始錄音
+    chrome.tabs.sendMessage(tab.id, {
+      action: 'startRecording',
+      language: currentLanguage,
+      autoDetect: autoDetect
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error('[Popup] 發送訊息失敗:', chrome.runtime.lastError);
+        alert('❌ 無法連接到頁面\n\n請重新整理頁面後再試。');
         return;
       }
 
-      // 將 stream ID 傳給 background
-      chrome.runtime.sendMessage({
-        action: 'startCapture',
-        streamId: streamId,
-        language: currentLanguage,
-        autoDetect: autoDetect
-      }, (response) => {
-        if (response && response.success) {
-          isRecording = true;
-          updateUI();
-        } else {
-          const errorMsg = response?.error || '未知錯誤';
-          console.error('[Popup] 啟動失敗:', errorMsg);
-
-          // 根據錯誤類型提供不同的提示
-          if (errorMsg.includes('Permission') || errorMsg.includes('NotAllowed')) {
-            alert('❌ 權限被拒絕\n\n請在彈出的對話框中點擊「允許」來授予音訊擷取權限。\n\n如果沒有看到對話框，請檢查瀏覽器的權限設定。');
-          } else if (errorMsg.includes('API key')) {
-            alert('❌ ' + errorMsg);
-          } else {
-            alert('❌ 啟動失敗: ' + errorMsg);
-          }
-        }
-      });
-    } catch (error) {
-      console.error('[Popup] 獲取 stream ID 失敗:', error);
-      console.error('[Popup] 錯誤詳情 - name:', error.name, 'message:', error.message);
-
-      // 根據錯誤類型提供友善的提示訊息
-      if (error.name === 'NotAllowedError' || error.message.includes('dismissed') || error.message.includes('denied')) {
-        alert('❌ 您拒絕了音訊擷取權限\n\n要使用即時字幕功能，請：\n1. 重新點擊「開始」按鈕\n2. 在彈出的對話框中點擊「允許」\n\n這個擴充功能需要擷取分頁音訊才能產生字幕。');
-      } else if (error.name === 'NotFoundError') {
-        alert('❌ 找不到音訊源\n\n請確認：\n1. 分頁有正在播放音訊\n2. 音訊未被靜音');
+      if (response && response.success) {
+        isRecording = true;
+        updateUI();
+        console.log('[Popup] 錄音已啟動');
       } else {
-        alert('❌ 無法啟動錄音\n\n錯誤: ' + error.message + '\n\n請重新整理分頁後再試一次。');
+        alert('❌ 啟動失敗\n\n請確認麥克風權限已開啟。');
       }
-    }
+    });
   });
 }
 
@@ -188,12 +155,17 @@ function startRecording() {
 function stopRecording() {
   console.log('[Popup] 停止錄音');
 
-  chrome.runtime.sendMessage({
-    action: 'stopCapture'
-  }, (response) => {
-    if (response.success) {
-      isRecording = false;
-      updateUI();
+  // 取得當前分頁
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs && tabs[0]) {
+      chrome.tabs.sendMessage(tabs[0].id, {
+        action: 'stopRecording'
+      }, (response) => {
+        if (!chrome.runtime.lastError) {
+          isRecording = false;
+          updateUI();
+        }
+      });
     }
   });
 }

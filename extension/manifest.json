@@ -4,12 +4,9 @@
   "version": "2.0.0",
   "description": "即時字幕產生器 - 使用 Web Speech API，免費無需 API Key",
   "permissions": [
-    "tabCapture",
     "activeTab",
-    "tabs",
     "storage",
-    "scripting",
-    "offscreen"
+    "scripting"
   ],
   "host_permissions": [
     "<all_urls>"

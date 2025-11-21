@@ -1,5 +1,5 @@
 // Stream Subtitles - Content Script
-// 在網頁上顯示字幕覆蓋層
+// 直接在網頁上使用 Web Speech API 進行語音辨識和字幕顯示
 
 let subtitleContainer = null;
 let subtitleText = null;
@@ -10,42 +10,32 @@ let interimSubtitle = '';
 let subtitleHistory = []; // 儲存字幕歷史
 let editModal = null; // 編輯視窗
 
-// 安全的訊息發送函數（處理 Extension context invalidated 錯誤）
-function safeSendMessage(message, callback) {
-  try {
-    chrome.runtime.sendMessage(message, (response) => {
-      // 檢查是否有 runtime 錯誤
-      if (chrome.runtime.lastError) {
-        console.warn('[Content] 訊息發送失敗:', chrome.runtime.lastError.message);
-        // 如果是 context invalidated，表示擴充功能已重新載入
-        if (chrome.runtime.lastError.message.includes('Extension context invalidated')) {
-          console.log('[Content] 擴充功能已重新載入，請重新整理頁面');
-        }
-        if (callback) callback({ success: false, error: chrome.runtime.lastError.message });
-        return;
-      }
-      if (callback) callback(response);
-    });
-  } catch (error) {
-    console.error('[Content] 發送訊息時發生錯誤:', error);
-    if (callback) callback({ success: false, error: error.message });
-  }
-}
+// Web Speech API
+let recognition = null;
+let isRecording = false;
+let currentLanguage = 'en';
+let autoDetect = false;
+
+// 檢查瀏覽器支援
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const isSpeechRecognitionSupported = !!SpeechRecognition;
 
 // 語言設定
 const languages = {
-  en: { code: 'en', name: 'English', flag: '🇬🇧' },
-  ja: { code: 'ja', name: '日本語', flag: '🇯🇵' },
-  zh: { code: 'zh-TW', name: '繁體中文', flag: '🇹🇼' }
+  en: { code: 'en-US', name: 'English', flag: '🇬🇧' },
+  ja: { code: 'ja-JP', name: '日本語', flag: '🇯🇵' },
+  'zh-TW': { code: 'zh-TW', name: '繁體中文', flag: '🇹🇼' }
 };
-
-let currentLanguage = 'en';
-let autoDetect = false;
-let isRecording = false;
 
 // 初始化
 function init() {
   console.log('[Content] 字幕腳本已載入');
+
+  // 檢查瀏覽器支援
+  if (!isSpeechRecognitionSupported) {
+    console.error('[Content] 瀏覽器不支援 Web Speech API');
+    return;
+  }
 
   // 建立 UI
   createSubtitleUI();
@@ -53,38 +43,175 @@ function init() {
   // 從 storage 載入設定
   loadSettings();
 
-  // 監聽來自 background 的訊息
+  // 監聽來自 popup 的訊息
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.log('[Content] 收到訊息:', message);
+    console.log('[Content] 收到訊息:', message.action);
 
     switch (message.action) {
-      case 'subtitle':
-        displaySubtitle(message.text, message.isFinal);
+      case 'startRecording':
+        startRecording(message.language, message.autoDetect);
+        sendResponse({ success: true });
         break;
 
-      case 'recordingStarted':
-        isRecording = true;
-        updateControlPanel();
-        showSubtitleUI();
+      case 'stopRecording':
+        stopRecording();
+        sendResponse({ success: true });
         break;
 
-      case 'recordingStopped':
-        isRecording = false;
-        updateControlPanel();
+      case 'changeLanguage':
+        changeLanguage(message.language, message.autoDetect);
+        sendResponse({ success: true });
         break;
 
-      case 'languageChanged':
-        currentLanguage = message.language;
-        autoDetect = message.autoDetect;
-        updateControlPanel();
+      case 'getStatus':
+        sendResponse({
+          isRecording,
+          currentLanguage,
+          autoDetect
+        });
         break;
+
+      default:
+        sendResponse({ success: false, error: 'Unknown action' });
     }
 
-    sendResponse({ success: true });
+    return true; // 保持訊息通道開啟
   });
 
   // 鍵盤快捷鍵
   document.addEventListener('keydown', handleKeyboardShortcut);
+}
+
+// 開始錄音
+function startRecording(language = 'en', autoDetectMode = false) {
+  console.log('[Content] 開始語音辨識，語言:', language);
+
+  // 如果已經在錄音，先停止
+  if (isRecording) {
+    stopRecording();
+  }
+
+  try {
+    currentLanguage = language;
+    autoDetect = autoDetectMode;
+
+    // 初始化 SpeechRecognition
+    recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = languages[language]?.code || 'en-US';
+    recognition.maxAlternatives = 1;
+
+    console.log('[Content] 使用語言代碼:', recognition.lang);
+
+    // 當有辨識結果時
+    recognition.onresult = (event) => {
+      handleSpeechResult(event);
+    };
+
+    // 開始時
+    recognition.onstart = () => {
+      console.log('[Content] 語音辨識已啟動');
+      isRecording = true;
+      updateControlPanel();
+      showSubtitleUI();
+    };
+
+    // 結束時自動重啟（保持持續辨識）
+    recognition.onend = () => {
+      console.log('[Content] 語音辨識結束');
+      if (isRecording) {
+        console.log('[Content] 自動重啟語音辨識');
+        try {
+          recognition.start();
+        } catch (err) {
+          console.error('[Content] 無法重啟語音辨識:', err);
+        }
+      }
+    };
+
+    // 錯誤處理
+    recognition.onerror = (event) => {
+      console.error('[Content] 語音辨識錯誤:', event.error);
+
+      // 處理特定錯誤
+      if (event.error === 'not-allowed') {
+        showToast('❌ 麥克風權限被拒絕，請允許使用麥克風');
+        stopRecording();
+      } else if (event.error === 'no-speech') {
+        console.log('[Content] 未偵測到語音，繼續監聽...');
+      } else if (event.error === 'network') {
+        showToast('❌ 網路錯誤，請檢查網路連線');
+      } else {
+        showToast(`❌ 辨識錯誤: ${event.error}`);
+      }
+    };
+
+    // 開始語音辨識
+    recognition.start();
+    console.log('[Content] 語音辨識啟動中...');
+
+  } catch (error) {
+    console.error('[Content] 啟動失敗:', error);
+    showToast('❌ 啟動失敗: ' + error.message);
+  }
+}
+
+// 停止錄音
+function stopRecording() {
+  console.log('[Content] 停止語音辨識');
+
+  if (recognition) {
+    try {
+      recognition.stop();
+    } catch (err) {
+      console.error('[Content] 停止語音辨識失敗:', err);
+    }
+    recognition = null;
+  }
+
+  isRecording = false;
+  updateControlPanel();
+}
+
+// 切換語言
+function changeLanguage(language, autoDetectMode) {
+  console.log('[Content] 切換語言:', language);
+
+  currentLanguage = language;
+  autoDetect = autoDetectMode;
+
+  // 如果正在錄音，重新啟動
+  if (isRecording) {
+    stopRecording();
+    setTimeout(() => {
+      startRecording(language, autoDetectMode);
+    }, 500);
+  } else {
+    updateControlPanel();
+  }
+}
+
+// 處理語音辨識結果
+function handleSpeechResult(event) {
+  try {
+    // 取得最新的辨識結果
+    const lastResultIndex = event.results.length - 1;
+    const result = event.results[lastResultIndex];
+
+    if (result && result[0]) {
+      const transcript = result[0].transcript;
+      const isFinal = result.isFinal;
+      const confidence = result[0].confidence;
+
+      console.log('[Content] 辨識結果:', transcript, isFinal ? '(final)' : '(interim)', 'confidence:', confidence);
+
+      // 顯示字幕
+      displaySubtitle(transcript, isFinal);
+    }
+  } catch (error) {
+    console.error('[Content] 處理語音辨識結果失敗:', error);
+  }
 }
 
 // 建立字幕 UI
@@ -97,383 +224,223 @@ function createSubtitleUI() {
       <button id="lang-en" class="lang-btn active" data-lang="en" title="English">EN</button>
       <button id="lang-ja" class="lang-btn" data-lang="ja" title="日本語">JP</button>
       <button id="lang-zh" class="lang-btn" data-lang="zh-TW" title="繁體中文">ZH</button>
-      <button id="lang-auto" class="lang-btn" data-lang="auto" title="自動偵測">AUTO</button>
-      <span class="separator">|</span>
-      <button id="toggle-recording" class="action-btn" title="開始/停止">⏺️</button>
-      <button id="settings-btn" class="action-btn" title="設定">⚙️</button>
+      <button id="toggle-subtitle" class="toggle-btn" title="顯示/隱藏字幕">👁️</button>
+      <button id="start-recording" class="start-btn" title="開始/停止錄音">▶️</button>
+    </div>
+    <div class="status-indicator">
+      <span class="status-dot"></span>
+      <span class="status-text">未啟動</span>
     </div>
   `;
+  document.body.appendChild(controlPanel);
 
   // 字幕容器
   subtitleContainer = document.createElement('div');
   subtitleContainer.id = 'stream-subtitle-container';
-
-  subtitleText = document.createElement('div');
-  subtitleText.id = 'stream-subtitle-text';
-  subtitleText.textContent = '';
-
-  subtitleContainer.appendChild(subtitleText);
-
-  // 加入到頁面
-  document.body.appendChild(controlPanel);
+  subtitleContainer.innerHTML = `
+    <div class="subtitle-content">
+      <div class="subtitle-text"></div>
+      <button class="edit-btn" title="修正字幕">✏️</button>
+    </div>
+  `;
   document.body.appendChild(subtitleContainer);
+
+  subtitleText = subtitleContainer.querySelector('.subtitle-text');
 
   // 綁定事件
   bindControlEvents();
-
-  console.log('[Content] UI 已建立');
 }
 
 // 綁定控制面板事件
 function bindControlEvents() {
-  // 語言切換按鈕
-  document.querySelectorAll('.lang-btn').forEach(btn => {
+  // 語言按鈕
+  const langButtons = controlPanel.querySelectorAll('.lang-btn');
+  langButtons.forEach(btn => {
     btn.addEventListener('click', () => {
       const lang = btn.dataset.lang;
-      const isAuto = lang === 'auto';
+      changeLanguage(lang, false);
 
-      // 傳送訊息到 background
-      safeSendMessage({
-        action: 'changeLanguage',
-        language: isAuto ? currentLanguage : lang,
-        autoDetect: isAuto
-      });
+      // 更新按鈕狀態
+      langButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
 
-      // 更新 UI
-      if (!isAuto) {
-        currentLanguage = lang;
-      }
-      autoDetect = isAuto;
-      updateControlPanel();
+      // 儲存設定
+      chrome.storage.sync.set({ language: lang, autoDetect: false });
     });
   });
 
   // 開始/停止按鈕
-  document.getElementById('toggle-recording').addEventListener('click', () => {
+  const startBtn = controlPanel.querySelector('#start-recording');
+  startBtn.addEventListener('click', () => {
     if (isRecording) {
       stopRecording();
     } else {
-      startRecording();
+      startRecording(currentLanguage, autoDetect);
     }
   });
 
-  // 設定按鈕
-  document.getElementById('settings-btn').addEventListener('click', () => {
-    // TODO: 開啟設定面板
-    alert('設定功能開發中...\n\n目前支援:\n- 語言切換 (EN/JP/ZH/AUTO)\n- 鍵盤快捷鍵 (1/2/3/4)');
+  // 顯示/隱藏按鈕
+  const toggleBtn = controlPanel.querySelector('#toggle-subtitle');
+  toggleBtn.addEventListener('click', () => {
+    if (isVisible) {
+      hideSubtitleUI();
+    } else {
+      showSubtitleUI();
+    }
+  });
+
+  // 編輯按鈕
+  const editBtn = subtitleContainer.querySelector('.edit-btn');
+  editBtn.addEventListener('click', () => {
+    if (currentSubtitle) {
+      showEditModal(currentSubtitle);
+    }
   });
 }
 
-// 更新控制面板
+// 更新控制面板狀態
 function updateControlPanel() {
-  // 更新語言按鈕狀態
-  document.querySelectorAll('.lang-btn').forEach(btn => {
-    btn.classList.remove('active');
-  });
+  const statusDot = controlPanel.querySelector('.status-dot');
+  const statusText = controlPanel.querySelector('.status-text');
+  const startBtn = controlPanel.querySelector('#start-recording');
 
-  if (autoDetect) {
-    document.getElementById('lang-auto').classList.add('active');
+  if (isRecording) {
+    statusDot.classList.add('recording');
+    statusText.textContent = '錄音中';
+    startBtn.textContent = '⏹️';
+    startBtn.classList.add('recording');
   } else {
-    const activeLang = currentLanguage === 'zh-TW' ? 'zh' : currentLanguage;
-    document.getElementById(`lang-${activeLang}`)?.classList.add('active');
+    statusDot.classList.remove('recording');
+    statusText.textContent = '未啟動';
+    startBtn.textContent = '▶️';
+    startBtn.classList.remove('recording');
   }
-
-  // 更新錄音按鈕
-  const recordBtn = document.getElementById('toggle-recording');
-  recordBtn.textContent = isRecording ? '⏹️' : '⏺️';
-  recordBtn.classList.toggle('recording', isRecording);
 }
 
 // 顯示字幕
 function displaySubtitle(text, isFinal) {
+  if (!text) return;
+
   if (isFinal) {
     // 最終結果
     currentSubtitle = text;
     interimSubtitle = '';
+    subtitleText.textContent = text;
+    subtitleText.classList.remove('interim');
 
-    // 儲存到歷史記錄
-    const subtitleEntry = {
-      id: Date.now(),
+    // 加入歷史記錄
+    subtitleHistory.push({
       text: text,
-      timestamp: new Date().toISOString(),
+      timestamp: Date.now(),
       language: currentLanguage
-    };
-    subtitleHistory.push(subtitleEntry);
+    });
 
-    // 只保留最近 50 條
+    // 限制歷史記錄長度
     if (subtitleHistory.length > 50) {
       subtitleHistory.shift();
     }
 
     // 儲存到 storage
-    saveSubtitleHistory();
+    chrome.storage.local.set({ subtitleHistory });
+
   } else {
-    // 暫時結果
+    // 臨時結果
     interimSubtitle = text;
+    subtitleText.textContent = text;
+    subtitleText.classList.add('interim');
   }
 
-  // 組合顯示
-  const displayText = currentSubtitle + (interimSubtitle ? ' ' + interimSubtitle : '');
-
-  // 更新字幕並加入編輯按鈕
-  if (isFinal && currentSubtitle) {
-    subtitleText.innerHTML = `
-      <span class="subtitle-content">${escapeHtml(displayText)}</span>
-      <button class="edit-subtitle-btn" title="修正字幕">✏️</button>
-    `;
-
-    // 綁定編輯按鈕事件
-    const editBtn = subtitleText.querySelector('.edit-subtitle-btn');
-    editBtn.addEventListener('click', () => openEditModal(currentSubtitle, subtitleHistory[subtitleHistory.length - 1].id));
-  } else {
-    subtitleText.textContent = displayText;
-  }
-
-  // 顯示字幕容器
-  showSubtitleUI();
-
-  // 如果是最終結果，5 秒後清除舊字幕
-  if (isFinal) {
-    setTimeout(() => {
-      if (subtitleText.querySelector('.subtitle-content')?.textContent === displayText) {
-        currentSubtitle = '';
-        if (!interimSubtitle) {
-          subtitleText.textContent = '';
-        }
-      }
-    }, 5000);
+  // 自動顯示字幕
+  if (!isVisible) {
+    showSubtitleUI();
   }
 }
 
 // 顯示字幕 UI
 function showSubtitleUI() {
-  if (!isVisible) {
-    subtitleContainer.style.display = 'block';
-    controlPanel.style.display = 'block';
-    isVisible = true;
-  }
+  subtitleContainer.classList.add('visible');
+  isVisible = true;
 }
 
 // 隱藏字幕 UI
 function hideSubtitleUI() {
-  subtitleContainer.style.display = 'none';
-  controlPanel.style.display = 'none';
+  subtitleContainer.classList.remove('visible');
   isVisible = false;
 }
 
-// 開始錄音
-function startRecording() {
-  safeSendMessage({
-    action: 'startCapture',
-    language: currentLanguage,
-    autoDetect: autoDetect
-  }, (response) => {
-    if (response && response.success) {
-      console.log('[Content] 開始錄音');
-    } else {
-      alert('錄音失敗: ' + (response?.error || '未知錯誤'));
-    }
-  });
-}
-
-// 停止錄音
-function stopRecording() {
-  safeSendMessage({
-    action: 'stopCapture'
-  }, (response) => {
-    if (response && response.success) {
-      console.log('[Content] 停止錄音');
-      subtitleText.textContent = '';
-      currentSubtitle = '';
-      interimSubtitle = '';
-    }
-  });
-}
-
-// 鍵盤快捷鍵
-function handleKeyboardShortcut(event) {
-  // Alt + 數字鍵切換語言
-  if (event.altKey) {
-    switch (event.key) {
-      case '1':
-        event.preventDefault();
-        changeLanguage('en', false);
-        break;
-      case '2':
-        event.preventDefault();
-        changeLanguage('ja', false);
-        break;
-      case '3':
-        event.preventDefault();
-        changeLanguage('zh-TW', false);
-        break;
-      case '4':
-        event.preventDefault();
-        changeLanguage(currentLanguage, true); // AUTO
-        break;
-      case 's':
-      case 'S':
-        event.preventDefault();
-        document.getElementById('toggle-recording').click();
-        break;
-    }
-  }
-}
-
-// 切換語言
-function changeLanguage(lang, auto) {
-  safeSendMessage({
-    action: 'changeLanguage',
-    language: lang,
-    autoDetect: auto
-  });
-
-  currentLanguage = lang;
-  autoDetect = auto;
-  updateControlPanel();
-}
-
-// 載入設定
-function loadSettings() {
-  chrome.storage.sync.get(['language', 'autoDetect', 'subtitleStyle'], (result) => {
-    if (result.language) {
-      currentLanguage = result.language;
-    }
-    if (result.autoDetect !== undefined) {
-      autoDetect = result.autoDetect;
-    }
-    if (result.subtitleStyle) {
-      applySubtitleStyle(result.subtitleStyle);
-    }
-
-    updateControlPanel();
-  });
-}
-
-// 套用字幕樣式
-function applySubtitleStyle(style) {
-  if (style.fontSize) {
-    subtitleText.style.fontSize = style.fontSize;
-  }
-  if (style.fontFamily) {
-    subtitleText.style.fontFamily = style.fontFamily;
-  }
-  if (style.color) {
-    subtitleText.style.color = style.color;
-  }
-  if (style.backgroundColor) {
-    subtitleText.style.backgroundColor = style.backgroundColor;
-  }
-  // TODO: 處理 position
-}
-
-// HTML 轉義
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-// 開啟編輯視窗
-function openEditModal(originalText, subtitleId) {
-  // 如果視窗不存在，先建立
+// 顯示編輯視窗
+function showEditModal(text) {
+  // 建立 modal（如果不存在）
   if (!editModal) {
-    createEditModal();
-  }
-
-  // 填入原始文字
-  const textarea = editModal.querySelector('#edit-subtitle-input');
-  textarea.value = originalText;
-  textarea.dataset.subtitleId = subtitleId;
-  textarea.dataset.originalText = originalText;
-
-  // 顯示視窗
-  editModal.style.display = 'flex';
-  textarea.focus();
-  textarea.select();
-}
-
-// 建立編輯視窗
-function createEditModal() {
-  editModal = document.createElement('div');
-  editModal.id = 'stream-subtitle-edit-modal';
-  editModal.innerHTML = `
-    <div class="edit-modal-content">
-      <h3>✏️ 修正字幕</h3>
-      <div class="edit-form">
-        <label>原始文字：</label>
-        <div id="edit-original-text" class="original-text"></div>
-
-        <label>修正為：</label>
-        <textarea id="edit-subtitle-input" rows="3" placeholder="輸入正確的文字..."></textarea>
-
-        <div class="edit-buttons">
-          <button id="save-correction-btn" class="primary">💾 儲存修正</button>
-          <button id="cancel-edit-btn" class="secondary">取消</button>
+    editModal = document.createElement('div');
+    editModal.id = 'stream-subtitle-edit-modal';
+    editModal.innerHTML = `
+      <div class="modal-content">
+        <h3>修正字幕</h3>
+        <div class="form-group">
+          <label>錯誤的文字：</label>
+          <input type="text" id="wrong-text" readonly>
+        </div>
+        <div class="form-group">
+          <label>正確的文字：</label>
+          <input type="text" id="correct-text" placeholder="輸入正確的文字">
+        </div>
+        <div class="modal-buttons">
+          <button id="save-correction" class="primary-btn">儲存</button>
+          <button id="cancel-correction" class="secondary-btn">取消</button>
         </div>
       </div>
-    </div>
-  `;
+    `;
+    document.body.appendChild(editModal);
 
-  document.body.appendChild(editModal);
+    // 綁定事件
+    editModal.querySelector('#save-correction').addEventListener('click', saveCorrection);
+    editModal.querySelector('#cancel-correction').addEventListener('click', closeEditModal);
+  }
 
-  // 綁定按鈕事件
-  editModal.querySelector('#save-correction-btn').addEventListener('click', saveCorrection);
-  editModal.querySelector('#cancel-edit-btn').addEventListener('click', () => {
-    editModal.style.display = 'none';
-  });
+  // 填入文字
+  editModal.querySelector('#wrong-text').value = text;
+  editModal.querySelector('#correct-text').value = '';
+  editModal.classList.add('visible');
 
-  // 點擊背景關閉
-  editModal.addEventListener('click', (e) => {
-    if (e.target === editModal) {
-      editModal.style.display = 'none';
-    }
-  });
+  // 聚焦到輸入框
+  editModal.querySelector('#correct-text').focus();
+}
 
-  // ESC 關閉
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && editModal.style.display === 'flex') {
-      editModal.style.display = 'none';
-    }
-  });
+// 關閉編輯視窗
+function closeEditModal() {
+  if (editModal) {
+    editModal.classList.remove('visible');
+  }
 }
 
 // 儲存修正
 function saveCorrection() {
-  const textarea = editModal.querySelector('#edit-subtitle-input');
-  const subtitleId = parseInt(textarea.dataset.subtitleId);
-  const originalText = textarea.dataset.originalText;
-  const correctedText = textarea.value.trim();
+  const wrongText = editModal.querySelector('#wrong-text').value.trim();
+  const correctText = editModal.querySelector('#correct-text').value.trim();
 
-  if (!correctedText || correctedText === originalText) {
-    editModal.style.display = 'none';
+  if (!correctText) {
+    showToast('請輸入正確的文字');
     return;
   }
 
-  // 更新字幕歷史
-  const subtitle = subtitleHistory.find(s => s.id === subtitleId);
-  if (subtitle) {
-    subtitle.corrected = correctedText;
-    subtitle.original = originalText;
-  }
-
-  // 儲存修正記錄
+  // 讀取現有的修正記錄
   chrome.storage.sync.get(['corrections'], (result) => {
-    const corrections = result.corrections || [];
+    let corrections = result.corrections || [];
 
-    // 查找是否已有相同的修正
-    const existingIndex = corrections.findIndex(c => c.wrong === originalText);
+    // 檢查是否已存在
+    const existingIndex = corrections.findIndex(c => c.wrong === wrongText);
 
     if (existingIndex >= 0) {
       // 更新現有記錄
-      corrections[existingIndex].correct = correctedText;
-      corrections[existingIndex].count++;
+      corrections[existingIndex].correct = correctText;
+      corrections[existingIndex].count += 1;
       corrections[existingIndex].lastSeen = new Date().toISOString();
     } else {
-      // 新增修正記錄
+      // 新增記錄
       corrections.push({
-        wrong: originalText,
-        correct: correctedText,
+        wrong: wrongText,
+        correct: correctText,
         count: 1,
         language: currentLanguage,
         createdAt: new Date().toISOString(),
@@ -483,57 +450,69 @@ function saveCorrection() {
 
     // 儲存
     chrome.storage.sync.set({ corrections }, () => {
-      console.log('[Content] 修正已儲存:', originalText, '→', correctedText);
-
-      // 通知 background 更新 keywords
-      safeSendMessage({
-        action: 'updateCorrections',
-        corrections
-      });
-
-      // 顯示成功提示
-      showToast('✅ 修正已儲存！');
+      console.log('[Content] 修正已儲存:', wrongText, '→', correctText);
+      showToast('✅ 修正已儲存');
+      closeEditModal();
     });
   });
-
-  // 儲存歷史
-  saveSubtitleHistory();
-
-  // 關閉視窗
-  editModal.style.display = 'none';
 }
 
-// 儲存字幕歷史
-function saveSubtitleHistory() {
-  chrome.storage.local.set({ subtitleHistory }, () => {
-    console.log('[Content] 字幕歷史已儲存');
-  });
-}
-
-// 顯示提示訊息
+// 顯示 Toast 提示
 function showToast(message) {
   const toast = document.createElement('div');
-  toast.className = 'subtitle-toast';
+  toast.className = 'stream-subtitle-toast';
   toast.textContent = message;
   document.body.appendChild(toast);
 
   setTimeout(() => {
     toast.classList.add('show');
-  }, 10);
+  }, 100);
 
   setTimeout(() => {
     toast.classList.remove('show');
-    setTimeout(() => toast.remove(), 300);
-  }, 2000);
+    setTimeout(() => {
+      document.body.removeChild(toast);
+    }, 300);
+  }, 3000);
 }
 
-// 載入字幕歷史
-function loadSubtitleHistory() {
-  chrome.storage.local.get(['subtitleHistory'], (result) => {
-    if (result.subtitleHistory) {
-      subtitleHistory = result.subtitleHistory;
+// 載入設定
+function loadSettings() {
+  chrome.storage.sync.get(['language', 'autoDetect'], (result) => {
+    if (result.language) {
+      currentLanguage = result.language;
     }
+    if (result.autoDetect !== undefined) {
+      autoDetect = result.autoDetect;
+    }
+    updateControlPanel();
   });
+}
+
+// 鍵盤快捷鍵
+function handleKeyboardShortcut(e) {
+  // Alt + 1/2/3 切換語言
+  if (e.altKey && !e.ctrlKey && !e.shiftKey) {
+    switch (e.key) {
+      case '1':
+        changeLanguage('en', false);
+        break;
+      case '2':
+        changeLanguage('ja', false);
+        break;
+      case '3':
+        changeLanguage('zh-TW', false);
+        break;
+      case 's':
+      case 'S':
+        if (isRecording) {
+          stopRecording();
+        } else {
+          startRecording(currentLanguage, autoDetect);
+        }
+        break;
+    }
+  }
 }
 
 // 初始化
@@ -542,8 +521,5 @@ if (document.readyState === 'loading') {
 } else {
   init();
 }
-
-// 載入歷史記錄
-loadSubtitleHistory();
 
 console.log('[Content] Content script 載入完成');
