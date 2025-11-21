@@ -58,14 +58,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true; // 保持訊息通道開啟
 
     case 'stopCapture':
-      stopCapture();
-      sendResponse({ success: true });
-      break;
+      stopCapture()
+        .then(() => sendResponse({ success: true }))
+        .catch(error => sendResponse({ success: false, error: error.message }));
+      return true; // 保持訊息通道開啟
 
     case 'changeLanguage':
-      changeLanguage(message.language, message.autoDetect);
-      sendResponse({ success: true });
-      break;
+      changeLanguage(message.language, message.autoDetect)
+        .then(() => sendResponse({ success: true }))
+        .catch(error => sendResponse({ success: false, error: error.message }));
+      return true; // 保持訊息通道開啟
 
     case 'getStatus':
       sendResponse({
@@ -127,9 +129,13 @@ async function startCapture(streamId, language = 'en', autoDetectMode = false) {
     throw new Error('無效的 stream ID');
   }
 
-  // 如果已經在錄音，先停止
+  // 如果已經在錄音，先停止並等待清理完成
   if (isRecording) {
-    stopCapture();
+    console.log('[Background] 偵測到正在錄音，先停止舊的錄音...');
+    await stopCapture();
+    // 等待一下確保資源完全釋放
+    await new Promise(resolve => setTimeout(resolve, 500));
+    console.log('[Background] 舊的錄音已停止，資源已清理');
   }
 
   try {
@@ -178,23 +184,26 @@ async function startCapture(streamId, language = 'en', autoDetectMode = false) {
 }
 
 // 停止擷取
-function stopCapture() {
+async function stopCapture() {
   console.log('[Background] 停止擷取');
 
   isRecording = false;
 
-  // 發送訊息到 offscreen document 停止錄音
-  chrome.runtime.sendMessage({
-    action: 'stopCapture'
-  }).catch(err => {
+  // 發送訊息到 offscreen document 停止錄音並等待完成
+  try {
+    await chrome.runtime.sendMessage({
+      action: 'stopCapture'
+    });
+    console.log('[Background] Offscreen document 已確認停止');
+  } catch (err) {
     console.log('[Background] 無法傳送停止訊息到 offscreen:', err.message);
-  });
+  }
 
   notifyContentScript('recordingStopped');
 }
 
 // 切換語言
-function changeLanguage(language, autoDetectMode) {
+async function changeLanguage(language, autoDetectMode) {
   console.log('[Background] 切換語言:', language, '自動偵測:', autoDetectMode);
 
   // 更新語言設定
@@ -204,7 +213,7 @@ function changeLanguage(language, autoDetectMode) {
   // 如果正在錄音，提示用戶需要重新啟動
   if (isRecording) {
     console.log('[Background] 錄音中切換語言，需要用戶重新啟動錄音');
-    stopCapture();
+    await stopCapture();
     notifyContentScript('languageChanged', {
       language,
       autoDetect,
