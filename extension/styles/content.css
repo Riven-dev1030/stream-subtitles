@@ -111,12 +111,12 @@
   line-height: 1.4;
   text-align: center;
   word-wrap: break-word;
+  transition: opacity 0.15s ease;
 }
 
-/* 臨時字幕樣式 */
+/* 臨時字幕樣式 - 只有非常細微的透明度差異 */
 .subtitle-text.interim {
-  opacity: 0.7;
-  font-style: italic;
+  opacity: 0.92;
 }
 
 /* 編輯按鈕 */

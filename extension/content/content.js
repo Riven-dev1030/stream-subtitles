@@ -321,11 +321,13 @@ function updateControlPanel() {
 function displaySubtitle(text, isFinal) {
   if (!text) return;
 
+  // 更新文字內容（不管是 interim 還是 final）
+  subtitleText.textContent = text;
+
   if (isFinal) {
-    // 最終結果
+    // 最終結果 - 移除 interim 樣式
     currentSubtitle = text;
     interimSubtitle = '';
-    subtitleText.textContent = text;
     subtitleText.classList.remove('interim');
 
     // 加入歷史記錄
@@ -344,9 +346,8 @@ function displaySubtitle(text, isFinal) {
     chrome.storage.local.set({ subtitleHistory });
 
   } else {
-    // 臨時結果
+    // 臨時結果 - 添加 interim 樣式（但樣式改得很細微）
     interimSubtitle = text;
-    subtitleText.textContent = text;
     subtitleText.classList.add('interim');
   }
 
