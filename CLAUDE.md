@@ -839,6 +839,18 @@ Before committing changes, verify:
   - Fixed `chrome.tabCapture.getMediaStreamId()` failing silently
   - Resolved "Permission dismissed" errors
   - Improved error handling in popup.js for better user feedback
+- 🔧 **CRITICAL FIX**: Fixed offscreen document loading timing issue
+  - Added 500ms delay after creating offscreen document
+  - Prevents "Could not establish connection" errors
+  - Resolves double-initialization and repeated startup attempts
+- 🔧 **CRITICAL FIX**: Implemented getUserMedia constraints format fallback
+  - Tries standard format first, falls back to mandatory format
+  - Provides compatibility across different Chrome versions
+  - Fixes "Permission dismissed" errors in offscreen document
+- 🔧 **CRITICAL FIX**: Added automatic retry mechanism for content script communication
+  - Retries up to 3 times with 500ms intervals
+  - Ensures subtitle messages reach the page even if content script is still loading
+  - Critical for subtitle display functionality
 - ✅ Enhanced error messages for Chrome internal pages
 - ✅ Added detailed logging for debugging permission issues
 - 📝 **Important**: In Manifest V3, tabCapture does NOT show traditional permission dialog - it auto-grants/denies based on manifest config

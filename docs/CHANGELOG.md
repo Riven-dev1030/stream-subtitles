@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added "tabs" permission to manifest.json
   - This permission is required for tabCapture API to work properly in Manifest V3
   - Without it, the API fails with "Permission dismissed" error
+- **CRITICAL**: Added automatic retry mechanism for content script communication
+  - Fixes "Could not establish connection. Receiving end does not exist" errors when notifying content script
+  - Retries up to 3 times with 500ms intervals
+  - Ensures subtitle messages reach the page even if content script is still loading
+  - Critical for subtitle display functionality
 - Improved error handling when permission is denied or unavailable
 - Added validation to prevent usage on Chrome internal pages (chrome://, chrome-extension://)
 - Enhanced error messages to provide clearer guidance to users
