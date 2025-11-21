@@ -47,7 +47,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   switch (message.action) {
     case 'startCapture':
-      startCapture(message.tabId, message.language, message.autoDetect)
+      startCapture(message.streamId, message.language, message.autoDetect)
         .then(() => sendResponse({ success: true }))
         .catch(error => sendResponse({ success: false, error: error.message }));
       return true; // 保持訊息通道開啟
@@ -106,8 +106,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // 開始擷取音訊
-async function startCapture(tabId, language = 'en', autoDetectMode = false) {
-  console.log('[Background] 開始擷取音訊...');
+async function startCapture(streamId, language = 'en', autoDetectMode = false) {
+  console.log('[Background] 開始擷取音訊，stream ID:', streamId);
 
   // 載入 API key
   const apiKey = await loadApiKey();
@@ -115,6 +115,11 @@ async function startCapture(tabId, language = 'en', autoDetectMode = false) {
   // 檢查 API key
   if (!apiKey) {
     throw new Error('請先設定 Deepgram API key！請到擴充功能設定中輸入你的 API key。');
+  }
+
+  // 檢查 stream ID
+  if (!streamId) {
+    throw new Error('無效的 stream ID');
   }
 
   // 如果已經在錄音，先停止
@@ -129,17 +134,6 @@ async function startCapture(tabId, language = 'en', autoDetectMode = false) {
 
     // 確保 offscreen document 存在
     await setupOffscreenDocument();
-
-    // 使用 getMediaStreamId 獲取 stream ID
-    const streamId = await chrome.tabCapture.getMediaStreamId({
-      targetTabId: tabId
-    });
-
-    console.log('[Background] 已獲取 stream ID:', streamId);
-
-    if (!streamId) {
-      throw new Error('無法獲取 stream ID');
-    }
 
     // 發送訊息到 offscreen document 開始錄音
     console.log('[Background] 發送訊息到 offscreen document...');
@@ -190,26 +184,22 @@ function stopCapture() {
 function changeLanguage(language, autoDetectMode) {
   console.log('[Background] 切換語言:', language, '自動偵測:', autoDetectMode);
 
-  const wasRecording = isRecording;
+  // 更新語言設定
+  currentLanguage = language;
+  autoDetect = autoDetectMode;
 
-  // 如果正在錄音，需要重新連線
-  if (wasRecording) {
+  // 如果正在錄音，提示用戶需要重新啟動
+  if (isRecording) {
+    console.log('[Background] 錄音中切換語言，需要用戶重新啟動錄音');
     stopCapture();
-
-    // 延遲一下再重新開始，確保資源釋放
-    setTimeout(() => {
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs[0]) {
-          startCapture(tabs[0].id, language, autoDetectMode);
-        }
-      });
-    }, 500);
+    notifyContentScript('languageChanged', {
+      language,
+      autoDetect,
+      needRestart: true
+    });
   } else {
-    currentLanguage = language;
-    autoDetect = autoDetectMode;
+    notifyContentScript('languageChanged', { language, autoDetect });
   }
-
-  notifyContentScript('languageChanged', { language, autoDetect });
 }
 
 // 通知 content script

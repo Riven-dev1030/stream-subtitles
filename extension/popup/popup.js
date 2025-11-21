@@ -135,21 +135,40 @@ function startRecording() {
   console.log('[Popup] 開始錄音');
 
   // 取得當前分頁
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+  chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
     if (tabs[0]) {
-      chrome.runtime.sendMessage({
-        action: 'startCapture',
-        tabId: tabs[0].id,
-        language: currentLanguage,
-        autoDetect: autoDetect
-      }, (response) => {
-        if (response.success) {
-          isRecording = true;
-          updateUI();
-        } else {
-          alert('啟動失敗: ' + response.error);
+      try {
+        // 在 popup 中獲取 stream ID（需要用戶手勢上下文）
+        console.log('[Popup] 獲取 stream ID...');
+        const streamId = await chrome.tabCapture.getMediaStreamId({
+          targetTabId: tabs[0].id
+        });
+
+        console.log('[Popup] 已獲取 stream ID:', streamId);
+
+        if (!streamId) {
+          alert('無法獲取音訊權限');
+          return;
         }
-      });
+
+        // 將 stream ID 傳給 background
+        chrome.runtime.sendMessage({
+          action: 'startCapture',
+          streamId: streamId,
+          language: currentLanguage,
+          autoDetect: autoDetect
+        }, (response) => {
+          if (response && response.success) {
+            isRecording = true;
+            updateUI();
+          } else {
+            alert('啟動失敗: ' + (response?.error || '未知錯誤'));
+          }
+        });
+      } catch (error) {
+        console.error('[Popup] 獲取 stream ID 失敗:', error);
+        alert('無法啟動錄音: ' + error.message);
+      }
     }
   });
 }
