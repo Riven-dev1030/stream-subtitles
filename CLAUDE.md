@@ -117,6 +117,17 @@ stream-subtitles/
 - Toast notification animations
 - Responsive design for mobile
 
+**`extension/manifest.json`**
+- Manifest V3 configuration file
+- **Critical Permissions** (as of v1.0.1):
+  - `tabCapture` - Required for capturing tab audio
+  - `activeTab` - Required for user gesture context
+  - **`tabs`** - **REQUIRED** for `chrome.tabCapture.getMediaStreamId()` to work
+  - `storage` - For settings and corrections
+  - `scripting` - For content script injection
+  - `offscreen` - For offscreen document (audio processing)
+- **Important**: In Manifest V3, `tabCapture` does NOT show a traditional permission dialog. It auto-grants/denies based on manifest config and user gesture context.
+
 ---
 
 ## Development Workflows
@@ -533,6 +544,36 @@ User corrects subtitle → Storage → Background generates keywords → Deepgra
 
 ### Common Issues
 
+**Problem: "Permission dismissed" error or no permission dialog shows**
+
+**Symptoms:** Error message "Permission dismissed" in console, or no permission dialog appears when clicking Start
+
+**Root Cause:** In Manifest V3, `chrome.tabCapture` does NOT show a traditional permission dialog. It auto-grants/denies based on manifest configuration.
+
+**Solutions:**
+1. **Verify manifest.json has all required permissions:**
+   - ✅ `tabCapture` - Must be present
+   - ✅ `activeTab` - Must be present
+   - ✅ **`tabs`** - **CRITICAL**: Without this, `getMediaStreamId()` fails silently
+   - ✅ `offscreen` - Required for audio processing
+2. **Check if on restricted page:**
+   - ❌ Cannot capture `chrome://` pages
+   - ❌ Cannot capture `chrome-extension://` pages
+   - ✅ Use on normal websites (YouTube, Netflix, etc.)
+3. **Ensure user gesture context:**
+   - Must click Start button in popup (not via keyboard shortcut)
+   - Must be called from popup.js, not background script
+4. **Check console logs:**
+   ```
+   [Popup] 當前分頁 ID: xxx, URL: https://...
+   [Popup] 獲取 stream ID，targetTabId: xxx
+   [Popup] 已獲取 stream ID: {stream-id}
+   ```
+5. **If still failing:**
+   - Reload extension: chrome://extensions/ → reload button
+   - Restart Chrome
+   - Check Chrome version (requires Chrome 116+)
+
 **Problem: No subtitles appearing**
 
 **Symptoms:** Extension loaded, recording started, but no subtitles show
@@ -748,11 +789,20 @@ Before committing changes, verify:
 ## Maintenance Notes
 
 **Last Updated**: 2025-11-21
-**Current Version**: 1.0.0 (with Keywords Learning Feature)
+**Current Version**: 1.0.1 (with Keywords Learning Feature + Permission Fixes)
 
 ### Recent Updates
 
-**2025-11-21:**
+**2025-11-21 (v1.0.1):**
+- 🔧 **CRITICAL FIX**: Added "tabs" permission to manifest.json
+  - Fixed `chrome.tabCapture.getMediaStreamId()` failing silently
+  - Resolved "Permission dismissed" errors
+  - Improved error handling in popup.js for better user feedback
+- ✅ Enhanced error messages for Chrome internal pages
+- ✅ Added detailed logging for debugging permission issues
+- 📝 **Important**: In Manifest V3, tabCapture does NOT show traditional permission dialog - it auto-grants/denies based on manifest config
+
+**2025-11-21 (v1.0.0):**
 - ✅ Added Keywords Learning Feature (basic version)
 - ✅ Updated project structure documentation
 - ✅ Added troubleshooting guide for actual issues
