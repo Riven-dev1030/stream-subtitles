@@ -57,9 +57,23 @@
       </button>
     </div>
 
+    <!-- 修正歷史和 Keywords -->
+    <div class="corrections-section">
+      <h3>📚 學習記錄</h3>
+      <div id="corrections-list" class="corrections-list">
+        <div class="empty-state">
+          <p>還沒有修正記錄</p>
+          <p class="small">點擊字幕旁的 ✏️ 按鈕來修正錯誤</p>
+        </div>
+      </div>
+      <div class="corrections-actions">
+        <button id="clear-corrections-btn" class="small-btn">🗑️ 清除全部</button>
+      </div>
+    </div>
+
     <!-- 快捷鍵提示 -->
-    <div class="shortcuts-section">
-      <h3>⌨️ 鍵盤快捷鍵</h3>
+    <div class="shortcuts-section collapsed">
+      <h3 class="collapsible-header">⌨️ 鍵盤快捷鍵 <span class="toggle-icon">▼</span></h3>
       <div class="shortcut-list">
         <div class="shortcut-item">
           <kbd>Alt + 1</kbd>
