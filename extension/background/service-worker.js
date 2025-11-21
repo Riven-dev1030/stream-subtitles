@@ -1,17 +1,13 @@
-// Stream Subtitles - Background Service Worker
-// 處理音訊擷取、Deepgram 連線、和訊息傳遞
+// Stream Subtitles - Background Service Worker (Manifest V3)
+// 使用 Offscreen Document API 處理音訊擷取和 Deepgram 連線
 
-let audioStream = null;
-let deepgramSocket = null;
-let mediaRecorder = null;
 let isRecording = false;
 let currentLanguage = 'en'; // 預設英文
 let autoDetect = false;
 let cachedApiKey = null; // 快取 API key
 let customKeywords = []; // 自訂 keywords
 
-// Deepgram API 設定
-const DEEPGRAM_URL = 'wss://api.deepgram.com/v1/listen';
+const OFFSCREEN_DOCUMENT_PATH = 'offscreen/offscreen.html';
 
 // 載入 API key
 async function loadApiKey() {
@@ -23,9 +19,31 @@ async function loadApiKey() {
   });
 }
 
-// 監聽來自 popup 和 content script 的訊息
+// 確保 offscreen document 存在
+async function setupOffscreenDocument() {
+  // 檢查是否已經有 offscreen document
+  const existingContexts = await chrome.runtime.getContexts({
+    contextTypes: ['OFFSCREEN_DOCUMENT'],
+    documentUrls: [chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH)]
+  });
+
+  if (existingContexts.length > 0) {
+    return; // 已經存在
+  }
+
+  // 創建 offscreen document
+  await chrome.offscreen.createDocument({
+    url: OFFSCREEN_DOCUMENT_PATH,
+    reasons: ['USER_MEDIA'], // 用於 getUserMedia
+    justification: 'Recording audio from tab for real-time transcription'
+  });
+
+  console.log('[Background] Offscreen document 已創建');
+}
+
+// 監聽來自 popup、content script 和 offscreen 的訊息
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('[Background] 收到訊息:', message);
+  console.log('[Background] 收到訊息:', message.action);
 
   switch (message.action) {
     case 'startCapture':
@@ -65,6 +83,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
       return true; // 保持訊息通道開啟
 
+    // 從 offscreen document 轉發字幕到 content script
+    case 'subtitle':
+      notifyContentScript('subtitle', {
+        text: message.text,
+        isFinal: message.isFinal,
+        language: currentLanguage
+      });
+      break;
+
+    // 從 offscreen document 轉發語言檢測結果
+    case 'languageDetected':
+      console.log('[Background] 偵測到語言:', message.language);
+      notifyContentScript('languageDetected', {
+        language: message.language
+      });
+      break;
+
     default:
       sendResponse({ success: false, error: 'Unknown action' });
   }
@@ -92,30 +127,34 @@ async function startCapture(tabId, language = 'en', autoDetectMode = false) {
     currentLanguage = language;
     autoDetect = autoDetectMode;
 
-    // 使用 chrome.tabCapture API 擷取分頁音訊
-    audioStream = await chrome.tabCapture.capture({
-      audio: true,
-      video: false
+    // 確保 offscreen document 存在
+    await setupOffscreenDocument();
+
+    // 使用 getMediaStreamId 獲取 stream ID
+    const streamId = await chrome.tabCapture.getMediaStreamId({
+      targetTabId: tabId
     });
 
-    if (!audioStream) {
-      throw new Error('無法擷取音訊');
-    }
+    console.log('[Background] 已獲取 stream ID:', streamId);
 
-    console.log('[Background] 音訊擷取成功');
-
-    // 連線到 Deepgram（傳入 API key）
-    await connectToDeepgram(apiKey);
-
-    // 開始處理音訊串流
-    startAudioProcessing();
+    // 發送訊息到 offscreen document 開始錄音
+    await chrome.runtime.sendMessage({
+      action: 'startCapture',
+      streamId: streamId,
+      apiKey: apiKey,
+      language: currentLanguage,
+      autoDetect: autoDetect,
+      keywords: customKeywords
+    });
 
     isRecording = true;
     notifyContentScript('recordingStarted', { language: currentLanguage, autoDetect });
 
+    console.log('[Background] 錄音已開始');
+
   } catch (error) {
     console.error('[Background] 擷取失敗:', error);
-    stopCapture();
+    isRecording = false;
     throw error;
   }
 }
@@ -126,127 +165,14 @@ function stopCapture() {
 
   isRecording = false;
 
-  // 停止 MediaRecorder
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
-  }
-
-  // 關閉 Deepgram 連線
-  if (deepgramSocket && deepgramSocket.readyState === WebSocket.OPEN) {
-    deepgramSocket.close();
-  }
-
-  // 停止音訊串流
-  if (audioStream) {
-    audioStream.getTracks().forEach(track => track.stop());
-    audioStream = null;
-  }
+  // 發送訊息到 offscreen document 停止錄音
+  chrome.runtime.sendMessage({
+    action: 'stopCapture'
+  }).catch(err => {
+    console.log('[Background] 無法傳送停止訊息到 offscreen:', err.message);
+  });
 
   notifyContentScript('recordingStopped');
-}
-
-// 連線到 Deepgram
-async function connectToDeepgram(apiKey) {
-  return new Promise((resolve, reject) => {
-    console.log('[Background] 連線到 Deepgram...');
-
-    // 建立 WebSocket URL
-    let url = `${DEEPGRAM_URL}?encoding=linear16&sample_rate=16000`;
-
-    if (autoDetect) {
-      url += '&detect_language=true';
-    } else {
-      url += `&language=${currentLanguage}`;
-    }
-
-    // 加入其他設定
-    url += '&punctuate=true'; // 加入標點符號
-    url += '&interim_results=true'; // 即時結果
-    url += '&endpointing=300'; // 靜音偵測（300ms）
-
-    // 加入自訂 keywords
-    if (customKeywords.length > 0) {
-      customKeywords.forEach(keyword => {
-        url += `&keywords=${encodeURIComponent(keyword)}`;
-      });
-      console.log('[Background] 已加入', customKeywords.length, '個 keywords');
-    }
-
-    // 使用傳入的 API key
-    deepgramSocket = new WebSocket(url, ['token', apiKey]);
-
-    deepgramSocket.onopen = () => {
-      console.log('[Background] Deepgram 連線成功');
-      resolve();
-    };
-
-    deepgramSocket.onmessage = (event) => {
-      handleDeepgramMessage(event.data);
-    };
-
-    deepgramSocket.onerror = (error) => {
-      console.error('[Background] Deepgram 錯誤:', error);
-      reject(error);
-    };
-
-    deepgramSocket.onclose = () => {
-      console.log('[Background] Deepgram 連線關閉');
-    };
-  });
-}
-
-// 處理 Deepgram 回傳的訊息
-function handleDeepgramMessage(data) {
-  try {
-    const response = JSON.parse(data);
-
-    // 檢查是否有轉錄結果
-    if (response.channel?.alternatives?.[0]?.transcript) {
-      const transcript = response.channel.alternatives[0].transcript;
-      const isFinal = response.is_final;
-
-      // 只處理有內容的結果
-      if (transcript.trim()) {
-        console.log('[Background] 字幕:', transcript, isFinal ? '(final)' : '(interim)');
-
-        // 傳送字幕到 content script
-        notifyContentScript('subtitle', {
-          text: transcript,
-          isFinal: isFinal,
-          language: currentLanguage
-        });
-      }
-    }
-  } catch (error) {
-    console.error('[Background] 解析 Deepgram 回應失敗:', error);
-  }
-}
-
-// 開始音訊處理
-function startAudioProcessing() {
-  console.log('[Background] 開始音訊處理');
-
-  // 使用 MediaRecorder 將音訊編碼為 Deepgram 可接受的格式
-  const options = {
-    mimeType: 'audio/webm;codecs=opus',
-    audioBitsPerSecond: 16000
-  };
-
-  mediaRecorder = new MediaRecorder(audioStream, options);
-
-  mediaRecorder.ondataavailable = async (event) => {
-    if (event.data.size > 0 && deepgramSocket?.readyState === WebSocket.OPEN) {
-      // 將音訊資料傳送到 Deepgram
-      deepgramSocket.send(event.data);
-    }
-  };
-
-  mediaRecorder.onerror = (error) => {
-    console.error('[Background] MediaRecorder 錯誤:', error);
-  };
-
-  // 每 250ms 傳送一次資料（低延遲）
-  mediaRecorder.start(250);
 }
 
 // 切換語言
@@ -254,7 +180,6 @@ function changeLanguage(language, autoDetectMode) {
   console.log('[Background] 切換語言:', language, '自動偵測:', autoDetectMode);
 
   const wasRecording = isRecording;
-  const tabId = null; // 會從目前的 tab 取得
 
   // 如果正在錄音，需要重新連線
   if (wasRecording) {
