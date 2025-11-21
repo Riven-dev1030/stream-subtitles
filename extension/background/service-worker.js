@@ -28,6 +28,7 @@ async function setupOffscreenDocument() {
   });
 
   if (existingContexts.length > 0) {
+    console.log('[Background] Offscreen document 已存在');
     return; // 已經存在
   }
 
@@ -39,6 +40,10 @@ async function setupOffscreenDocument() {
   });
 
   console.log('[Background] Offscreen document 已創建');
+
+  // 等待 offscreen document 完全載入
+  await new Promise(resolve => setTimeout(resolve, 500));
+  console.log('[Background] Offscreen document 已就緒');
 }
 
 // 監聽來自 popup、content script 和 offscreen 的訊息

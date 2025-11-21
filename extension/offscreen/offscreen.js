@@ -54,14 +54,29 @@ async function startCapture(streamId, apiKey, language, autoDetect, keywords) {
     // 使用 getUserMedia 搭配 chromeMediaSourceId 獲取音訊流
     console.log('[Offscreen] 嘗試獲取音訊流，stream ID:', streamId);
 
-    audioStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        mandatory: {
+    // 嘗試兩種格式：先嘗試標準格式，失敗則嘗試 mandatory 格式
+    try {
+      // 方法 1: 標準格式（Chrome 新版本）
+      audioStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
           chromeMediaSource: 'tab',
           chromeMediaSourceId: streamId
         }
-      }
-    });
+      });
+      console.log('[Offscreen] 使用標準格式成功獲取音訊流');
+    } catch (err) {
+      console.log('[Offscreen] 標準格式失敗，嘗試 mandatory 格式...', err.message);
+      // 方法 2: Mandatory 格式（Chrome 舊版本/相容性）
+      audioStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          mandatory: {
+            chromeMediaSource: 'tab',
+            chromeMediaSourceId: streamId
+          }
+        }
+      });
+      console.log('[Offscreen] 使用 mandatory 格式成功獲取音訊流');
+    }
 
     console.log('[Offscreen] 音訊流已建立，tracks:', audioStream.getTracks().length);
 
