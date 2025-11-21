@@ -574,29 +574,46 @@ User corrects subtitle → Storage → Background generates keywords → Deepgra
    - Restart Chrome
    - Check Chrome version (requires Chrome 116+)
 
-**Important Implementation Detail:**
+**Important Implementation Details:**
 
-When using `navigator.mediaDevices.getUserMedia()` with tabCapture in offscreen documents, the constraints **must** use the `mandatory` wrapper:
+1. **getUserMedia Constraints Format:**
 
-```javascript
-// ✅ CORRECT format (official Chrome documentation)
-const stream = await navigator.mediaDevices.getUserMedia({
-  audio: {
-    mandatory: {
-      chromeMediaSource: 'tab',
-      chromeMediaSourceId: streamId
-    }
-  }
-});
+   Different Chrome versions may require different constraint formats. Use a fallback approach:
 
-// ❌ INCORRECT format (will cause permission errors)
-const stream = await navigator.mediaDevices.getUserMedia({
-  audio: {
-    chromeMediaSource: 'tab',
-    chromeMediaSourceId: streamId
-  }
-});
-```
+   ```javascript
+   // Method 1: Try standard format first (newer Chrome)
+   try {
+     const stream = await navigator.mediaDevices.getUserMedia({
+       audio: {
+         chromeMediaSource: 'tab',
+         chromeMediaSourceId: streamId
+       }
+     });
+   } catch (err) {
+     // Method 2: Fall back to mandatory format (older Chrome)
+     const stream = await navigator.mediaDevices.getUserMedia({
+       audio: {
+         mandatory: {
+           chromeMediaSource: 'tab',
+           chromeMediaSourceId: streamId
+         }
+       }
+     });
+   }
+   ```
+
+2. **Offscreen Document Loading Timing:**
+
+   After creating an offscreen document, wait for it to fully load before sending messages:
+
+   ```javascript
+   await chrome.offscreen.createDocument({...});
+   // Wait 500ms for document to fully load
+   await new Promise(resolve => setTimeout(resolve, 500));
+   // Now safe to send messages
+   ```
+
+   Without this delay, you may encounter "Could not establish connection. Receiving end does not exist" errors.
 
 **Problem: No subtitles appearing**
 
