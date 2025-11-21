@@ -215,16 +215,26 @@ function changeLanguage(language, autoDetectMode) {
   }
 }
 
-// 通知 content script
-function notifyContentScript(action, data = {}) {
+// 通知 content script（帶重試機制）
+function notifyContentScript(action, data = {}, retries = 3) {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (tabs[0]) {
       chrome.tabs.sendMessage(tabs[0].id, {
         action,
         ...data
+      }).then(() => {
+        console.log('[Background] 已通知 content script:', action);
       }).catch(err => {
-        // 忽略錯誤（content script 可能還沒載入）
-        console.log('[Background] 無法傳送訊息到 content script:', err.message);
+        // Content script 可能還沒載入，這不是嚴重錯誤
+        if (retries > 0) {
+          console.log(`[Background] Content script 暫時無法連接，將重試... (剩餘 ${retries} 次)`);
+          // 500ms 後重試
+          setTimeout(() => {
+            notifyContentScript(action, data, retries - 1);
+          }, 500);
+        } else {
+          console.log('[Background] Content script 無法連接（這不影響字幕功能）:', err.message);
+        }
       });
     }
   });
