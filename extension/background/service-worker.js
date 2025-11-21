@@ -7,10 +7,20 @@ let mediaRecorder = null;
 let isRecording = false;
 let currentLanguage = 'en'; // 預設英文
 let autoDetect = false;
+let cachedApiKey = null; // 快取 API key
 
 // Deepgram API 設定
-const DEEPGRAM_API_KEY = ''; // 使用者需要填入 API key
 const DEEPGRAM_URL = 'wss://api.deepgram.com/v1/listen';
+
+// 載入 API key
+async function loadApiKey() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['deepgramApiKey'], (result) => {
+      cachedApiKey = result.deepgramApiKey || null;
+      resolve(cachedApiKey);
+    });
+  });
+}
 
 // 監聽來自 popup 和 content script 的訊息
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -38,9 +48,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         isRecording,
         currentLanguage,
         autoDetect,
-        hasApiKey: !!DEEPGRAM_API_KEY
+        hasApiKey: !!cachedApiKey
       });
       break;
+
+    case 'reloadApiKey':
+      loadApiKey().then((key) => {
+        console.log('[Background] API key 已重新載入:', key ? '有 key' : '無 key');
+        sendResponse({ success: true, hasApiKey: !!key });
+      });
+      return true; // 保持訊息通道開啟
 
     default:
       sendResponse({ success: false, error: 'Unknown action' });
@@ -51,9 +68,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function startCapture(tabId, language = 'en', autoDetectMode = false) {
   console.log('[Background] 開始擷取音訊...');
 
+  // 載入 API key
+  const apiKey = await loadApiKey();
+
   // 檢查 API key
-  if (!DEEPGRAM_API_KEY) {
-    throw new Error('請先設定 Deepgram API key！');
+  if (!apiKey) {
+    throw new Error('請先設定 Deepgram API key！請到擴充功能設定中輸入你的 API key。');
   }
 
   // 如果已經在錄音，先停止
@@ -78,8 +98,8 @@ async function startCapture(tabId, language = 'en', autoDetectMode = false) {
 
     console.log('[Background] 音訊擷取成功');
 
-    // 連線到 Deepgram
-    await connectToDeepgram();
+    // 連線到 Deepgram（傳入 API key）
+    await connectToDeepgram(apiKey);
 
     // 開始處理音訊串流
     startAudioProcessing();
@@ -120,7 +140,7 @@ function stopCapture() {
 }
 
 // 連線到 Deepgram
-async function connectToDeepgram() {
+async function connectToDeepgram(apiKey) {
   return new Promise((resolve, reject) => {
     console.log('[Background] 連線到 Deepgram...');
 
@@ -138,7 +158,8 @@ async function connectToDeepgram() {
     url += '&interim_results=true'; // 即時結果
     url += '&endpointing=300'; // 靜音偵測（300ms）
 
-    deepgramSocket = new WebSocket(url, ['token', DEEPGRAM_API_KEY]);
+    // 使用傳入的 API key
+    deepgramSocket = new WebSocket(url, ['token', apiKey]);
 
     deepgramSocket.onopen = () => {
       console.log('[Background] Deepgram 連線成功');
@@ -272,6 +293,18 @@ chrome.runtime.onInstalled.addListener((details) => {
       position: 'bottom'
     }
   });
+
+  // 載入 API key（如果存在）
+  loadApiKey().then((key) => {
+    if (key) {
+      console.log('[Background] 已找到儲存的 API key');
+    } else {
+      console.log('[Background] 未找到 API key，請到設定中輸入');
+    }
+  });
 });
 
-console.log('[Background] Service worker 已載入');
+// Service worker 啟動時載入 API key
+loadApiKey().then((key) => {
+  console.log('[Background] Service worker 已載入', key ? '(有 API key)' : '(無 API key)');
+});

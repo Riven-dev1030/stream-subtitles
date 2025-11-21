@@ -84,11 +84,39 @@
       </div>
     </div>
 
-    <!-- API 設定提示 -->
-    <div class="api-notice" id="api-notice">
-      <p>⚠️ 請先設定 Deepgram API key</p>
-      <p class="small">編輯 <code>background/service-worker.js</code></p>
-      <p class="small">設定 <code>DEEPGRAM_API_KEY</code> 變數</p>
+    <!-- API 設定區域 -->
+    <div class="api-section">
+      <h3>🔑 API 設定</h3>
+
+      <!-- 未設定時顯示 -->
+      <div id="api-setup" class="api-setup">
+        <p class="info-text">需要 Deepgram API key 才能使用字幕功能</p>
+        <div class="api-input-group">
+          <input
+            type="password"
+            id="api-key-input"
+            placeholder="貼上你的 Deepgram API key"
+            class="api-input"
+          >
+          <button id="save-api-key-btn" class="save-btn">💾 儲存</button>
+        </div>
+        <div class="api-help">
+          <a href="https://console.deepgram.com/signup" target="_blank" class="help-link">
+            🎁 取得免費 API Key（$200 額度）
+          </a>
+        </div>
+      </div>
+
+      <!-- 已設定時顯示 -->
+      <div id="api-status" class="api-status hidden">
+        <div class="api-key-display">
+          <span class="key-icon">✅</span>
+          <span id="api-key-masked" class="key-masked">sk-****...****</span>
+          <button id="edit-api-key-btn" class="icon-btn" title="修改">✏️</button>
+          <button id="delete-api-key-btn" class="icon-btn" title="刪除">🗑️</button>
+        </div>
+        <p class="small success-text">API key 已設定</p>
+      </div>
     </div>
 
     <!-- 版本資訊 -->

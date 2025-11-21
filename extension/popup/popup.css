@@ -234,39 +234,170 @@ kbd {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
-/* API 提示區 */
-.api-notice {
-  padding: 15px 20px;
-  background: #fff3cd;
-  border-top: 1px solid #ffeeba;
-  border-bottom: 1px solid #ffeeba;
-  color: #856404;
+/* API 設定區 */
+.api-section {
+  padding: 20px;
+  background: #f8f9fa;
+  border-top: 1px solid #e9ecef;
+  border-bottom: 1px solid #e9ecef;
 }
 
-.api-notice p {
-  margin-bottom: 8px;
-  font-size: 13px;
+.api-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: #495057;
 }
 
-.api-notice p:last-child {
-  margin-bottom: 0;
+/* API 設定界面 */
+.api-setup {
+  display: block;
 }
 
-.api-notice .small {
-  font-size: 11px;
-  opacity: 0.8;
-}
-
-.api-notice code {
-  background: rgba(0, 0, 0, 0.1);
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-family: 'Monaco', 'Courier New', monospace;
-  font-size: 11px;
-}
-
-.api-notice.hidden {
+.api-setup.hidden {
   display: none;
+}
+
+.api-setup .info-text {
+  font-size: 13px;
+  color: #6c757d;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.api-input-group {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.api-input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 2px solid #dee2e6;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: 'Monaco', 'Courier New', monospace;
+  transition: all 0.2s ease;
+}
+
+.api-input:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.save-btn {
+  padding: 10px 16px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.save-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.api-help {
+  text-align: center;
+}
+
+.help-link {
+  display: inline-block;
+  font-size: 12px;
+  color: #667eea;
+  text-decoration: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.help-link:hover {
+  background: rgba(102, 126, 234, 0.1);
+  text-decoration: underline;
+}
+
+/* API 已設定狀態 */
+.api-status {
+  display: block;
+}
+
+.api-status.hidden {
+  display: none;
+}
+
+.api-key-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: white;
+  border: 2px solid #d4edda;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.key-icon {
+  font-size: 16px;
+}
+
+.key-masked {
+  flex: 1;
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 12px;
+  color: #495057;
+}
+
+.icon-btn {
+  background: none;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.icon-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+  transform: scale(1.1);
+}
+
+.success-text {
+  font-size: 12px;
+  color: #28a745;
+  text-align: center;
+  margin: 0;
+}
+
+/* Toast 訊息 */
+.toast-message {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: rgba(0, 0, 0, 0.9);
+  color: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  transform: translateY(-20px);
+  transition: all 0.3s ease;
+  z-index: 10000;
+}
+
+.toast-message.show {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 /* 頁尾 */
