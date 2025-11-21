@@ -105,26 +105,31 @@
 
 ```
 extension/
-├── manifest.json           # 擴充功能設定
+├── manifest.json           # 擴充功能設定 (Manifest V3)
 ├── background/
-│   └── service-worker.js  # 背景處理（音訊擷取、Deepgram 連線）
+│   └── service-worker.js  # 背景服務 (狀態管理、訊息轉發)
+├── offscreen/             # Offscreen Documents (Manifest V3)
+│   ├── offscreen.html     # Offscreen 頁面
+│   └── offscreen.js       # 音訊擷取、Deepgram WebSocket 連線
 ├── content/
-│   └── content.js         # 內容腳本（字幕顯示）
+│   └── content.js         # 內容腳本（字幕顯示、編輯 UI）
 ├── popup/
 │   ├── popup.html         # 彈出視窗 UI
 │   ├── popup.css          # 彈出視窗樣式
-│   └── popup.js           # 彈出視窗邏輯
+│   └── popup.js           # 彈出視窗邏輯（獲取 streamID、設定）
 ├── styles/
 │   └── content.css        # 字幕樣式
-└── icons/                 # 圖示
+└── icons/                 # 圖示 (程式化生成)
 ```
 
 ### 技術棧
 
 - **Chrome Extension Manifest V3** - 最新的擴充功能規範
-- **chrome.tabCapture API** - 擷取分頁音訊
-- **Deepgram WebSocket API** - 即時語音辨識
+- **Offscreen Documents API** - 在背景處理音訊（Manifest V3 最佳實踐）
+- **chrome.tabCapture API** - 擷取分頁音訊 (`getMediaStreamId`)
+- **Deepgram WebSocket API** - 即時語音辨識（支援 keywords boost）
 - **MediaRecorder API** - 音訊串流處理
+- **Web Audio API** - 音訊播放（避免錄音時靜音）
 
 ### 延遲分析
 
@@ -231,6 +236,114 @@ extension/
 - [ ] 關鍵字高亮顯示
 - [ ] 語音指令控制
 - [ ] 多說話者識別
+
+## 📖 開發記錄
+
+### 2025-11-21 - Manifest V3 遷移與核心修復
+
+#### 重大架構變更
+
+**問題：Manifest V3 不兼容**
+- ❌ 原始實作使用 `chrome.tabCapture.capture()` 在 background service worker 中
+- ❌ Manifest V3 中 `tabCapture.capture()` 只能在 foreground pages 使用
+- ❌ 導致 "chrome.tabCapture.capture is not a function" 錯誤
+
+**解決方案：Offscreen Documents API**
+- ✅ 採用 Chrome 官方推薦的 Offscreen Documents API
+- ✅ 創建 `offscreen/offscreen.html` 和 `offscreen/offscreen.js`
+- ✅ 在 offscreen document 中處理音訊擷取和 Deepgram 連線
+- ✅ 新增 `offscreen` 權限到 manifest.json
+
+**架構流程：**
+```
+Popup (獲取 streamId)
+  → Background Service Worker (管理狀態)
+    → Offscreen Document (音訊處理 + Deepgram)
+      → Background (轉發字幕)
+        → Content Script (顯示字幕)
+```
+
+#### 技術修復
+
+**1. getUserMedia API 格式修正**
+- ❌ 錯誤：使用過時的 `mandatory` 屬性
+- ✅ 修正：使用標準 constraints 格式
+```javascript
+// Before (錯誤)
+getUserMedia({ audio: { mandatory: { ... } } })
+
+// After (正確)
+getUserMedia({ audio: { chromeMediaSource: 'tab', chromeMediaSourceId: streamId } })
+```
+
+**2. 音訊播放問題**
+- ❌ 問題：tabCapture 會自動靜音原始頁面
+- ✅ 解決：使用 AudioContext 重新播放音訊
+```javascript
+audioContext = new AudioContext();
+audioSource = audioContext.createMediaStreamSource(audioStream);
+audioSource.connect(audioContext.destination);
+```
+
+**3. Permission Dismissed 錯誤**
+- ❌ 問題：在 background 中調用 `getMediaStreamId()` 失去用戶手勢上下文
+- ✅ 解決：移至 popup.js 在用戶點擊按鈕時調用
+- ✅ 確保所有權限請求都在有用戶手勢的上下文中執行
+
+**4. Extension Context Invalidated 錯誤**
+- ❌ 問題：content script 在擴充功能重新載入後嘗試發送訊息
+- ✅ 解決：新增 `safeSendMessage()` 函數檢查 `chrome.runtime.lastError`
+- ✅ 優雅處理擴充功能重新載入情況
+
+#### 錯誤處理改善
+
+**詳細錯誤日誌：**
+- 顯示完整的 DOMException 錯誤（name + message）
+- 針對常見錯誤提供具體說明（NotAllowedError, NotFoundError, AbortError）
+- 在每個關鍵步驟添加狀態日誌
+- 改善 Deepgram 連線錯誤提示（API key 驗證）
+
+**調試體驗提升：**
+```javascript
+console.log('[Offscreen] 嘗試獲取音訊流，stream ID:', streamId);
+console.log('[Offscreen] 音訊流已建立，tracks:', audioStream.getTracks().length);
+console.log('[Offscreen] MediaRecorder 已建立，state:', mediaRecorder.state);
+console.log('[Offscreen] Deepgram 連線成功');
+```
+
+#### Commits
+
+1. **cedb4f7** - `fix: migrate to Manifest V3 Offscreen Document API for audio capture`
+   - 新增 offscreen document 架構
+   - 移除 background 中的直接音訊處理
+
+2. **0891722** - `fix: correct getUserMedia constraints and add audio playback`
+   - 修正 getUserMedia API 調用格式
+   - 添加 AudioContext 音訊播放功能
+
+3. **4a1bad8** - `fix: improve error handling and add detailed logging`
+   - 改善錯誤處理和日誌輸出
+   - 新增 safeSendMessage 函數
+
+4. **e367e1c** - `fix: resolve Permission dismissed error by moving getMediaStreamId to popup`
+   - 將 getMediaStreamId 移至 popup 確保用戶手勢上下文
+   - 簡化語言切換邏輯
+
+#### 測試建議
+
+**重新載入擴充功能後測試：**
+1. 打開有音訊的網頁（YouTube, Netflix）
+2. 點擊擴充功能圖示
+3. 選擇語言
+4. 點擊「開始錄音」
+5. 驗證：
+   - ✅ 影片聲音正常播放
+   - ✅ 字幕正確顯示
+   - ✅ 沒有控制台錯誤
+   - ✅ 錄音/停止功能正常
+
+**已知限制：**
+- 錄音時切換語言會自動停止錄音（需要重新啟動以獲取新的用戶手勢）
 
 ## 🤝 貢獻
 
