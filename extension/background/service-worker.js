@@ -8,6 +8,7 @@ let isRecording = false;
 let currentLanguage = 'en'; // 預設英文
 let autoDetect = false;
 let cachedApiKey = null; // 快取 API key
+let customKeywords = []; // 自訂 keywords
 
 // Deepgram API 設定
 const DEEPGRAM_URL = 'wss://api.deepgram.com/v1/listen';
@@ -50,6 +51,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         autoDetect,
         hasApiKey: !!cachedApiKey
       });
+      break;
+
+    case 'updateCorrections':
+      updateKeywordsFromCorrections(message.corrections);
+      sendResponse({ success: true });
       break;
 
     case 'reloadApiKey':
@@ -157,6 +163,14 @@ async function connectToDeepgram(apiKey) {
     url += '&punctuate=true'; // 加入標點符號
     url += '&interim_results=true'; // 即時結果
     url += '&endpointing=300'; // 靜音偵測（300ms）
+
+    // 加入自訂 keywords
+    if (customKeywords.length > 0) {
+      customKeywords.forEach(keyword => {
+        url += `&keywords=${encodeURIComponent(keyword)}`;
+      });
+      console.log('[Background] 已加入', customKeywords.length, '個 keywords');
+    }
 
     // 使用傳入的 API key
     deepgramSocket = new WebSocket(url, ['token', apiKey]);
@@ -304,7 +318,51 @@ chrome.runtime.onInstalled.addListener((details) => {
   });
 });
 
-// Service worker 啟動時載入 API key
+// 從修正記錄更新 keywords
+function updateKeywordsFromCorrections(corrections) {
+  console.log('[Background] 更新 keywords，共', corrections.length, '筆修正');
+
+  // 轉換為 Deepgram keywords 格式
+  // 格式：word:boost_value（boost 值 1-10，建議 2-3）
+  customKeywords = corrections
+    .filter(c => c.count >= 1) // 至少出現 1 次
+    .map(c => {
+      // 根據出現次數決定 boost 值
+      const boost = Math.min(3, 1 + Math.floor(c.count / 2));
+      return `${c.correct}:${boost}`;
+    });
+
+  console.log('[Background] 已產生', customKeywords.length, '個 keywords:', customKeywords);
+
+  // 如果正在錄音，需要重新連線才能套用新的 keywords
+  if (isRecording) {
+    console.log('[Background] 偵測到正在錄音，重新連線以套用 keywords...');
+    const wasRecording = isRecording;
+    stopCapture();
+
+    setTimeout(() => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0] && wasRecording) {
+          startCapture(tabs[0].id, currentLanguage, autoDetect);
+        }
+      });
+    }, 500);
+  }
+}
+
+// 載入自訂 keywords
+function loadCustomKeywords() {
+  chrome.storage.sync.get(['corrections'], (result) => {
+    if (result.corrections && result.corrections.length > 0) {
+      updateKeywordsFromCorrections(result.corrections);
+    }
+  });
+}
+
+// Service worker 啟動時載入 API key 和 keywords
 loadApiKey().then((key) => {
   console.log('[Background] Service worker 已載入', key ? '(有 API key)' : '(無 API key)');
 });
+
+// 啟動時載入 keywords
+loadCustomKeywords();

@@ -144,3 +144,177 @@
   margin: 0;
   padding: 0;
 }
+
+/* 字幕編輯按鈕 */
+#stream-subtitle-text {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.subtitle-content {
+  flex: 1;
+}
+
+.edit-subtitle-btn {
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #ffffff;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 18px;
+  transition: all 0.2s ease;
+  outline: none;
+  flex-shrink: 0;
+}
+
+.edit-subtitle-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: scale(1.1);
+}
+
+.edit-subtitle-btn:active {
+  transform: scale(0.95);
+}
+
+/* 編輯視窗 */
+#stream-subtitle-edit-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 9999999;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(5px);
+}
+
+.edit-modal-content {
+  background: white;
+  border-radius: 12px;
+  padding: 30px;
+  max-width: 500px;
+  width: 90%;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  animation: modalSlideIn 0.3s ease;
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.edit-modal-content h3 {
+  margin: 0 0 20px 0;
+  color: #333;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.edit-form label {
+  display: block;
+  margin-bottom: 8px;
+  color: #555;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.original-text {
+  background: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 20px;
+  color: #333;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+#edit-subtitle-input {
+  width: 100%;
+  padding: 12px;
+  border: 2px solid #ddd;
+  border-radius: 6px;
+  font-size: 15px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  resize: vertical;
+  margin-bottom: 20px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+#edit-subtitle-input:focus {
+  border-color: #667eea;
+}
+
+.edit-buttons {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.edit-buttons button {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  outline: none;
+}
+
+.edit-buttons button.primary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.edit-buttons button.primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.edit-buttons button.secondary {
+  background: #e0e0e0;
+  color: #555;
+}
+
+.edit-buttons button.secondary:hover {
+  background: #d0d0d0;
+}
+
+/* Toast 提示 */
+.subtitle-toast {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  background: rgba(76, 175, 80, 0.95);
+  color: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  z-index: 99999999;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  transform: translateX(100px);
+  transition: all 0.3s ease;
+  backdrop-filter: blur(10px);
+}
+
+.subtitle-toast.show {
+  opacity: 1;
+  transform: translateX(0);
+}

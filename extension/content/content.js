@@ -7,6 +7,8 @@ let controlPanel = null;
 let isVisible = false;
 let currentSubtitle = '';
 let interimSubtitle = '';
+let subtitleHistory = []; // 儲存字幕歷史
+let editModal = null; // 編輯視窗
 
 // 語言設定
 const languages = {
@@ -166,6 +168,23 @@ function displaySubtitle(text, isFinal) {
     // 最終結果
     currentSubtitle = text;
     interimSubtitle = '';
+
+    // 儲存到歷史記錄
+    const subtitleEntry = {
+      id: Date.now(),
+      text: text,
+      timestamp: new Date().toISOString(),
+      language: currentLanguage
+    };
+    subtitleHistory.push(subtitleEntry);
+
+    // 只保留最近 50 條
+    if (subtitleHistory.length > 50) {
+      subtitleHistory.shift();
+    }
+
+    // 儲存到 storage
+    saveSubtitleHistory();
   } else {
     // 暫時結果
     interimSubtitle = text;
@@ -173,21 +192,34 @@ function displaySubtitle(text, isFinal) {
 
   // 組合顯示
   const displayText = currentSubtitle + (interimSubtitle ? ' ' + interimSubtitle : '');
-  subtitleText.textContent = displayText;
+
+  // 更新字幕並加入編輯按鈕
+  if (isFinal && currentSubtitle) {
+    subtitleText.innerHTML = `
+      <span class="subtitle-content">${escapeHtml(displayText)}</span>
+      <button class="edit-subtitle-btn" title="修正字幕">✏️</button>
+    `;
+
+    // 綁定編輯按鈕事件
+    const editBtn = subtitleText.querySelector('.edit-subtitle-btn');
+    editBtn.addEventListener('click', () => openEditModal(currentSubtitle, subtitleHistory[subtitleHistory.length - 1].id));
+  } else {
+    subtitleText.textContent = displayText;
+  }
 
   // 顯示字幕容器
   showSubtitleUI();
 
-  // 如果是最終結果，3 秒後清除舊字幕（保留最新的）
+  // 如果是最終結果，5 秒後清除舊字幕
   if (isFinal) {
     setTimeout(() => {
-      if (subtitleText.textContent === displayText) {
+      if (subtitleText.querySelector('.subtitle-content')?.textContent === displayText) {
         currentSubtitle = '';
         if (!interimSubtitle) {
           subtitleText.textContent = '';
         }
       }
-    }, 3000);
+    }, 5000);
   }
 }
 
@@ -313,11 +345,183 @@ function applySubtitleStyle(style) {
   // TODO: 處理 position
 }
 
+// HTML 轉義
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// 開啟編輯視窗
+function openEditModal(originalText, subtitleId) {
+  // 如果視窗不存在，先建立
+  if (!editModal) {
+    createEditModal();
+  }
+
+  // 填入原始文字
+  const textarea = editModal.querySelector('#edit-subtitle-input');
+  textarea.value = originalText;
+  textarea.dataset.subtitleId = subtitleId;
+  textarea.dataset.originalText = originalText;
+
+  // 顯示視窗
+  editModal.style.display = 'flex';
+  textarea.focus();
+  textarea.select();
+}
+
+// 建立編輯視窗
+function createEditModal() {
+  editModal = document.createElement('div');
+  editModal.id = 'stream-subtitle-edit-modal';
+  editModal.innerHTML = `
+    <div class="edit-modal-content">
+      <h3>✏️ 修正字幕</h3>
+      <div class="edit-form">
+        <label>原始文字：</label>
+        <div id="edit-original-text" class="original-text"></div>
+
+        <label>修正為：</label>
+        <textarea id="edit-subtitle-input" rows="3" placeholder="輸入正確的文字..."></textarea>
+
+        <div class="edit-buttons">
+          <button id="save-correction-btn" class="primary">💾 儲存修正</button>
+          <button id="cancel-edit-btn" class="secondary">取消</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(editModal);
+
+  // 綁定按鈕事件
+  editModal.querySelector('#save-correction-btn').addEventListener('click', saveCorrection);
+  editModal.querySelector('#cancel-edit-btn').addEventListener('click', () => {
+    editModal.style.display = 'none';
+  });
+
+  // 點擊背景關閉
+  editModal.addEventListener('click', (e) => {
+    if (e.target === editModal) {
+      editModal.style.display = 'none';
+    }
+  });
+
+  // ESC 關閉
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && editModal.style.display === 'flex') {
+      editModal.style.display = 'none';
+    }
+  });
+}
+
+// 儲存修正
+function saveCorrection() {
+  const textarea = editModal.querySelector('#edit-subtitle-input');
+  const subtitleId = parseInt(textarea.dataset.subtitleId);
+  const originalText = textarea.dataset.originalText;
+  const correctedText = textarea.value.trim();
+
+  if (!correctedText || correctedText === originalText) {
+    editModal.style.display = 'none';
+    return;
+  }
+
+  // 更新字幕歷史
+  const subtitle = subtitleHistory.find(s => s.id === subtitleId);
+  if (subtitle) {
+    subtitle.corrected = correctedText;
+    subtitle.original = originalText;
+  }
+
+  // 儲存修正記錄
+  chrome.storage.sync.get(['corrections'], (result) => {
+    const corrections = result.corrections || [];
+
+    // 查找是否已有相同的修正
+    const existingIndex = corrections.findIndex(c => c.wrong === originalText);
+
+    if (existingIndex >= 0) {
+      // 更新現有記錄
+      corrections[existingIndex].correct = correctedText;
+      corrections[existingIndex].count++;
+      corrections[existingIndex].lastSeen = new Date().toISOString();
+    } else {
+      // 新增修正記錄
+      corrections.push({
+        wrong: originalText,
+        correct: correctedText,
+        count: 1,
+        language: currentLanguage,
+        createdAt: new Date().toISOString(),
+        lastSeen: new Date().toISOString()
+      });
+    }
+
+    // 儲存
+    chrome.storage.sync.set({ corrections }, () => {
+      console.log('[Content] 修正已儲存:', originalText, '→', correctedText);
+
+      // 通知 background 更新 keywords
+      chrome.runtime.sendMessage({
+        action: 'updateCorrections',
+        corrections
+      });
+
+      // 顯示成功提示
+      showToast('✅ 修正已儲存！');
+    });
+  });
+
+  // 儲存歷史
+  saveSubtitleHistory();
+
+  // 關閉視窗
+  editModal.style.display = 'none';
+}
+
+// 儲存字幕歷史
+function saveSubtitleHistory() {
+  chrome.storage.local.set({ subtitleHistory }, () => {
+    console.log('[Content] 字幕歷史已儲存');
+  });
+}
+
+// 顯示提示訊息
+function showToast(message) {
+  const toast = document.createElement('div');
+  toast.className = 'subtitle-toast';
+  toast.textContent = message;
+  document.body.appendChild(toast);
+
+  setTimeout(() => {
+    toast.classList.add('show');
+  }, 10);
+
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  }, 2000);
+}
+
+// 載入字幕歷史
+function loadSubtitleHistory() {
+  chrome.storage.local.get(['subtitleHistory'], (result) => {
+    if (result.subtitleHistory) {
+      subtitleHistory = result.subtitleHistory;
+    }
+  });
+}
+
 // 初始化
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);
 } else {
   init();
 }
+
+// 載入歷史記錄
+loadSubtitleHistory();
 
 console.log('[Content] Content script 載入完成');
