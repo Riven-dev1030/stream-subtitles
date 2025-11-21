@@ -147,7 +147,7 @@ function startRecording() {
         console.log('[Popup] 已獲取 stream ID:', streamId);
 
         if (!streamId) {
-          alert('無法獲取音訊權限');
+          alert('❌ 無法獲取音訊權限\n\n請確認：\n1. 您已允許擷取分頁音訊\n2. 分頁有正在播放音訊');
           return;
         }
 
@@ -162,12 +162,31 @@ function startRecording() {
             isRecording = true;
             updateUI();
           } else {
-            alert('啟動失敗: ' + (response?.error || '未知錯誤'));
+            const errorMsg = response?.error || '未知錯誤';
+            console.error('[Popup] 啟動失敗:', errorMsg);
+
+            // 根據錯誤類型提供不同的提示
+            if (errorMsg.includes('Permission') || errorMsg.includes('NotAllowed')) {
+              alert('❌ 權限被拒絕\n\n請在彈出的對話框中點擊「允許」來授予音訊擷取權限。\n\n如果沒有看到對話框，請檢查瀏覽器的權限設定。');
+            } else if (errorMsg.includes('API key')) {
+              alert('❌ ' + errorMsg);
+            } else {
+              alert('❌ 啟動失敗: ' + errorMsg);
+            }
           }
         });
       } catch (error) {
         console.error('[Popup] 獲取 stream ID 失敗:', error);
-        alert('無法啟動錄音: ' + error.message);
+        console.error('[Popup] 錯誤詳情 - name:', error.name, 'message:', error.message);
+
+        // 根據錯誤類型提供友善的提示訊息
+        if (error.name === 'NotAllowedError' || error.message.includes('dismissed') || error.message.includes('denied')) {
+          alert('❌ 您拒絕了音訊擷取權限\n\n要使用即時字幕功能，請：\n1. 重新點擊「開始」按鈕\n2. 在彈出的對話框中點擊「允許」\n\n這個擴充功能需要擷取分頁音訊才能產生字幕。');
+        } else if (error.name === 'NotFoundError') {
+          alert('❌ 找不到音訊源\n\n請確認：\n1. 分頁有正在播放音訊\n2. 音訊未被靜音');
+        } else {
+          alert('❌ 無法啟動錄音\n\n錯誤: ' + error.message + '\n\n請重新整理分頁後再試一次。');
+        }
       }
     }
   });

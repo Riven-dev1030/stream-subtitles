@@ -103,14 +103,32 @@ async function startCapture(streamId, apiKey, language, autoDetect, keywords) {
   } catch (error) {
     console.error('[Offscreen] 擷取失敗:', error);
     console.error('[Offscreen] 錯誤詳情 - name:', error.name, 'message:', error.message);
+
+    // 根據錯誤類型提供友善的錯誤訊息
+    let friendlyError;
     if (error.name === 'NotAllowedError') {
       console.error('[Offscreen] 權限被拒絕，可能需要用戶授權');
+      friendlyError = new Error('權限被拒絕。請在彈出的對話框中點擊「允許」來授予音訊擷取權限。');
+      friendlyError.name = 'NotAllowedError';
     } else if (error.name === 'NotFoundError') {
       console.error('[Offscreen] 找不到音訊源，streamId 可能無效:', streamId);
+      friendlyError = new Error('找不到音訊源。請確認分頁正在播放音訊且音訊未被靜音。');
+      friendlyError.name = 'NotFoundError';
     } else if (error.name === 'AbortError') {
       console.error('[Offscreen] 操作被中止');
+      friendlyError = new Error('操作被中止。請重試。');
+      friendlyError.name = 'AbortError';
+    } else if (error.name === 'InvalidStateError') {
+      console.error('[Offscreen] 無效的狀態');
+      friendlyError = new Error('音訊擷取狀態異常。請重新整理分頁後再試。');
+      friendlyError.name = 'InvalidStateError';
+    } else {
+      // 其他未知錯誤
+      friendlyError = new Error(`音訊擷取失敗: ${error.message || '未知錯誤'}`);
+      friendlyError.name = error.name;
     }
-    throw error;
+
+    throw friendlyError;
   }
 }
 

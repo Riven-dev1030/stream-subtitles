@@ -159,7 +159,15 @@ async function startCapture(streamId, language = 'en', autoDetectMode = false) {
 
   } catch (error) {
     console.error('[Background] 擷取失敗:', error);
+    console.error('[Background] 錯誤類型:', error.name, '錯誤訊息:', error.message);
     isRecording = false;
+
+    // 通知 content script 錄音失敗
+    notifyContentScript('recordingError', {
+      error: error.message || '啟動失敗'
+    });
+
+    // 拋出錯誤，讓 popup 可以處理
     throw error;
   }
 }
