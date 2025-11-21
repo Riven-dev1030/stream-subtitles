@@ -10,6 +10,10 @@ let interimSubtitle = '';
 let subtitleHistory = []; // 儲存字幕歷史
 let editModal = null; // 編輯視窗
 
+// 顯示緩衝區 - 保存最近的句子用於滾動顯示
+let displayBuffer = []; // 最多保存 3 句
+const MAX_DISPLAY_SENTENCES = 3;
+
 // Web Speech API
 let recognition = null;
 let isRecording = false;
@@ -289,11 +293,13 @@ function bindControlEvents() {
     }
   });
 
-  // 編輯按鈕
+  // 編輯按鈕 - 編輯最新的一句話
   const editBtn = subtitleContainer.querySelector('.edit-btn');
   editBtn.addEventListener('click', () => {
-    if (currentSubtitle) {
-      showEditModal(currentSubtitle);
+    // 取得最新的句子
+    if (displayBuffer.length > 0) {
+      const latestSentence = displayBuffer[displayBuffer.length - 1].text;
+      showEditModal(latestSentence);
     }
   });
 }
@@ -321,14 +327,24 @@ function updateControlPanel() {
 function displaySubtitle(text, isFinal) {
   if (!text) return;
 
-  // 更新文字內容（不管是 interim 還是 final）
-  subtitleText.textContent = text;
-
   if (isFinal) {
-    // 最終結果 - 移除 interim 樣式
+    // 最終結果 - 加入緩衝區
     currentSubtitle = text;
     interimSubtitle = '';
-    subtitleText.classList.remove('interim');
+
+    // 將新句子加入顯示緩衝區
+    displayBuffer.push({
+      text: text,
+      timestamp: Date.now()
+    });
+
+    // 限制緩衝區大小（只保留最近 N 句）
+    if (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
+      displayBuffer.shift();
+    }
+
+    // 更新顯示
+    updateSubtitleDisplay();
 
     // 加入歷史記錄
     subtitleHistory.push({
@@ -346,14 +362,47 @@ function displaySubtitle(text, isFinal) {
     chrome.storage.local.set({ subtitleHistory });
 
   } else {
-    // 臨時結果 - 添加 interim 樣式（但樣式改得很細微）
+    // 臨時結果 - 顯示在最後一行後面
     interimSubtitle = text;
-    subtitleText.classList.add('interim');
+    updateSubtitleDisplay(text);
   }
 
   // 自動顯示字幕
   if (!isVisible) {
     showSubtitleUI();
+  }
+}
+
+// 更新字幕顯示
+function updateSubtitleDisplay(interimText = '') {
+  // 清空現有內容
+  subtitleText.innerHTML = '';
+
+  // 顯示緩衝區中的句子（每句一個 span）
+  displayBuffer.forEach((item, index) => {
+    const span = document.createElement('span');
+    span.className = 'subtitle-line';
+
+    // 舊的句子加上淡化效果
+    if (index < displayBuffer.length - 1) {
+      span.classList.add('old');
+    }
+
+    span.textContent = item.text;
+    subtitleText.appendChild(span);
+
+    // 在句子之間加上分隔（換行）
+    if (index < displayBuffer.length - 1 || interimText) {
+      subtitleText.appendChild(document.createElement('br'));
+    }
+  });
+
+  // 如果有臨時文字，顯示在最後
+  if (interimText) {
+    const span = document.createElement('span');
+    span.className = 'subtitle-line interim';
+    span.textContent = interimText;
+    subtitleText.appendChild(span);
   }
 }
 
