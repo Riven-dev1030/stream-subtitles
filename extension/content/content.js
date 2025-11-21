@@ -10,6 +10,28 @@ let interimSubtitle = '';
 let subtitleHistory = []; // 儲存字幕歷史
 let editModal = null; // 編輯視窗
 
+// 安全的訊息發送函數（處理 Extension context invalidated 錯誤）
+function safeSendMessage(message, callback) {
+  try {
+    chrome.runtime.sendMessage(message, (response) => {
+      // 檢查是否有 runtime 錯誤
+      if (chrome.runtime.lastError) {
+        console.warn('[Content] 訊息發送失敗:', chrome.runtime.lastError.message);
+        // 如果是 context invalidated，表示擴充功能已重新載入
+        if (chrome.runtime.lastError.message.includes('Extension context invalidated')) {
+          console.log('[Content] 擴充功能已重新載入，請重新整理頁面');
+        }
+        if (callback) callback({ success: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      if (callback) callback(response);
+    });
+  } catch (error) {
+    console.error('[Content] 發送訊息時發生錯誤:', error);
+    if (callback) callback({ success: false, error: error.message });
+  }
+}
+
 // 語言設定
 const languages = {
   en: { code: 'en', name: 'English', flag: '🇬🇧' },
@@ -111,7 +133,7 @@ function bindControlEvents() {
       const isAuto = lang === 'auto';
 
       // 傳送訊息到 background
-      chrome.runtime.sendMessage({
+      safeSendMessage({
         action: 'changeLanguage',
         language: isAuto ? currentLanguage : lang,
         autoDetect: isAuto
@@ -241,25 +263,25 @@ function hideSubtitleUI() {
 
 // 開始錄音
 function startRecording() {
-  chrome.runtime.sendMessage({
+  safeSendMessage({
     action: 'startCapture',
     language: currentLanguage,
     autoDetect: autoDetect
   }, (response) => {
-    if (response.success) {
+    if (response && response.success) {
       console.log('[Content] 開始錄音');
     } else {
-      alert('錄音失敗: ' + response.error);
+      alert('錄音失敗: ' + (response?.error || '未知錯誤'));
     }
   });
 }
 
 // 停止錄音
 function stopRecording() {
-  chrome.runtime.sendMessage({
+  safeSendMessage({
     action: 'stopCapture'
   }, (response) => {
-    if (response.success) {
+    if (response && response.success) {
       console.log('[Content] 停止錄音');
       subtitleText.textContent = '';
       currentSubtitle = '';
@@ -300,7 +322,7 @@ function handleKeyboardShortcut(event) {
 
 // 切換語言
 function changeLanguage(lang, auto) {
-  chrome.runtime.sendMessage({
+  safeSendMessage({
     action: 'changeLanguage',
     language: lang,
     autoDetect: auto
@@ -464,7 +486,7 @@ function saveCorrection() {
       console.log('[Content] 修正已儲存:', originalText, '→', correctedText);
 
       // 通知 background 更新 keywords
-      chrome.runtime.sendMessage({
+      safeSendMessage({
         action: 'updateCorrections',
         corrections
       });

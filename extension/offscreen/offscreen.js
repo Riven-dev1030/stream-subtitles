@@ -18,11 +18,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   switch (message.action) {
     case 'startCapture':
+      console.log('[Offscreen] 收到 startCapture 請求，streamId:', message.streamId);
       startCapture(message.streamId, message.apiKey, message.language, message.autoDetect, message.keywords)
-        .then(() => sendResponse({ success: true }))
+        .then(() => {
+          console.log('[Offscreen] startCapture 成功完成');
+          sendResponse({ success: true });
+        })
         .catch(error => {
-          console.error('[Offscreen] 啟動失敗:', error);
-          sendResponse({ success: false, error: error.message });
+          console.error('[Offscreen] 啟動失敗 - name:', error.name, 'message:', error.message);
+          console.error('[Offscreen] 完整錯誤:', error);
+          sendResponse({ success: false, error: error.message || String(error) });
         });
       return true; // 保持訊息通道開啟
 
@@ -97,6 +102,14 @@ async function startCapture(streamId, apiKey, language, autoDetect, keywords) {
 
   } catch (error) {
     console.error('[Offscreen] 擷取失敗:', error);
+    console.error('[Offscreen] 錯誤詳情 - name:', error.name, 'message:', error.message);
+    if (error.name === 'NotAllowedError') {
+      console.error('[Offscreen] 權限被拒絕，可能需要用戶授權');
+    } else if (error.name === 'NotFoundError') {
+      console.error('[Offscreen] 找不到音訊源，streamId 可能無效:', streamId);
+    } else if (error.name === 'AbortError') {
+      console.error('[Offscreen] 操作被中止');
+    }
     throw error;
   }
 }

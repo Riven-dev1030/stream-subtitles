@@ -137,8 +137,13 @@ async function startCapture(tabId, language = 'en', autoDetectMode = false) {
 
     console.log('[Background] 已獲取 stream ID:', streamId);
 
+    if (!streamId) {
+      throw new Error('無法獲取 stream ID');
+    }
+
     // 發送訊息到 offscreen document 開始錄音
-    await chrome.runtime.sendMessage({
+    console.log('[Background] 發送訊息到 offscreen document...');
+    const response = await chrome.runtime.sendMessage({
       action: 'startCapture',
       streamId: streamId,
       apiKey: apiKey,
@@ -146,6 +151,12 @@ async function startCapture(tabId, language = 'en', autoDetectMode = false) {
       autoDetect: autoDetect,
       keywords: customKeywords
     });
+
+    console.log('[Background] Offscreen 回應:', response);
+
+    if (!response || !response.success) {
+      throw new Error(response?.error || '啟動 offscreen document 失敗');
+    }
 
     isRecording = true;
     notifyContentScript('recordingStarted', { language: currentLanguage, autoDetect });
