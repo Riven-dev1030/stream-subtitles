@@ -14,9 +14,9 @@ let editModal = null; // 編輯視窗
 let displayBuffer = []; // 最多保存 3 句
 const MAX_DISPLAY_SENTENCES = 3;
 const MAX_CHARS_PER_LINE = 15; // 每行最多 15 字元（依用戶建議調整）
-const MAX_TOTAL_CHARS = 50; // 總共最多 50 字元，超過就清理
-const MIN_DISPLAY_TIME = 3000; // Final 句子至少顯示 3 秒
-const MIN_INTERIM_DISPLAY_TIME = 2000; // Interim 句子至少顯示 2 秒
+const MAX_TOTAL_CHARS = 50; // 總共最多 50 字元，Final + Interim 共享此額度
+const MIN_DISPLAY_TIME = 1500; // Final 句子至少顯示 1.5 秒
+const MIN_INTERIM_DISPLAY_TIME = 2000; // Interim 句子至少顯示 2 秒（已棄用，Interim 不加入 Buffer）
 
 // 上一次的辨識文字（用於檢測增量）
 let lastTranscript = '';
@@ -477,7 +477,7 @@ function displaySubtitle(text, isFinal) {
         const removed = displayBuffer.shift();
         console.log('[Content] 移除舊句子（超過句數限制，已顯示', Math.round(displayDuration / 1000), '秒）:', removed.text.substring(0, 20) + '...');
       } else {
-        console.log('[Content] ⏳ 最舊句子還不能移除（僅顯示', Math.round(displayDuration / 1000), '秒，需要3秒）');
+        console.log('[Content] ⏳ 最舊句子還不能移除（僅顯示', Math.round(displayDuration / 1000), '秒，需要1.5秒）');
         break; // 不移除，等下次再檢查
       }
     }
@@ -523,12 +523,31 @@ function displaySubtitle(text, isFinal) {
 
     console.log('[Content] Interim 結果 (', text.length, '字):', text.substring(0, 30) + '...');
 
-    // 限制 Interim 顯示長度為 35 字（只顯示最後 35 字）
+    // ========== Final + Interim 共享 50 字額度（動態分配）==========
+    // 1. 計算 Buffer (Final) 的總字數
+    const bufferTotalChars = displayBuffer.reduce((sum, item) => sum + item.text.length, 0);
+    console.log('[Content] Buffer 總字數:', bufferTotalChars, '字');
+
+    // 2. 計算剩餘額度
+    const remainingQuota = MAX_TOTAL_CHARS - bufferTotalChars;
+    console.log('[Content] 剩餘字數額度:', remainingQuota, '字');
+
+    // 3. Interim 可顯示字數 = min(剩餘額度, 35)
     const MAX_INTERIM_DISPLAY_CHARS = 35;
-    let displayText = text;
-    if (text.length > MAX_INTERIM_DISPLAY_CHARS) {
-      displayText = '...' + text.slice(-MAX_INTERIM_DISPLAY_CHARS);
-      console.log('[Content] Interim 過長，截取最後', MAX_INTERIM_DISPLAY_CHARS, '字');
+    const interimMaxChars = Math.max(0, Math.min(remainingQuota, MAX_INTERIM_DISPLAY_CHARS));
+    console.log('[Content] Interim 可顯示:', interimMaxChars, '字');
+
+    // 4. 根據可用額度截取 Interim 文字
+    let displayText = '';
+    if (interimMaxChars > 0) {
+      if (text.length > interimMaxChars) {
+        displayText = '...' + text.slice(-interimMaxChars);
+        console.log('[Content] Interim 截取最後', interimMaxChars, '字');
+      } else {
+        displayText = text;
+      }
+    } else {
+      console.log('[Content] ⚠️ Buffer 已滿額，Interim 無法顯示');
     }
 
     // 直接顯示在臨時區域，不加入 displayBuffer
