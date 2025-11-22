@@ -459,7 +459,8 @@ function cleanupBeforeAdd(newSentences) {
 
   // 只在有清理時才輸出日誌（減少 console 輸出）
   if (layer > 0) {
-    console.log(`[Content] 🗑️ 分層清理(L${layer})：清理 ${removed} 字，剩餘 ${currentChars - removed} 字`);
+    // currentChars 已經是清理後的值，不需要再減
+    console.log(`[Content] 🗑️ 分層清理(L${layer})：清理 ${removed} 字，剩餘 ${currentChars} 字`);
   }
 }
 
@@ -571,7 +572,14 @@ function displaySubtitle(text, isFinal) {
       console.log('[Content] 🔄 更新 Interim (', finalText.length, '字)');
     } else {
       // 新增一個 interim 項目
-      // 先檢查是否需要清理
+      // ⚠️ 重要：先清理所有舊的 interim，確保最多只有 1 個 interim
+      const oldInterimCount = displayBuffer.filter(item => item.source === 'interim').length;
+      if (oldInterimCount > 0) {
+        console.log('[Content] 🧹 清理', oldInterimCount, '個舊的 interim');
+        displayBuffer = displayBuffer.filter(item => item.source === 'final');
+      }
+
+      // 檢查是否需要清理 final 項目以騰出空間
       const totalChars = displayBuffer.reduce((sum, item) => sum + item.text.length, 0);
       const afterAddChars = totalChars + normalized.length;
 
