@@ -2,19 +2,48 @@
 
 本文檔詳細說明 `stream-subtitles` Chrome 擴充功能中 **Final（最終）** 和 **Interim（臨時）** 字幕的處理邏輯差異。
 
-**文件版本**: 2025-11-22
-**相關代碼**: `extension/content/content.js` (lines 351-596)
+**文件版本**: 2025-11-22 (更新)
+**相關代碼**: `extension/content/content.js`
 
 ---
 
 ## 📋 目錄
 
-1. [處理邏輯對比表](#處理邏輯對比表)
-2. [Final 結果處理流程](#final-結果處理流程)
-3. [Interim 結果處理流程](#interim-結果處理流程)
-4. [關鍵差異總結](#關鍵差異總結)
-5. [時間參數配置](#時間參數配置)
-6. [設計理念](#設計理念)
+1. [核心設計理念](#核心設計理念)
+2. [處理邏輯對比表](#處理邏輯對比表)
+3. [Final 結果處理流程](#final-結果處理流程)
+4. [Interim 結果處理流程](#interim-結果處理流程)
+5. [定時清理機制](#定時清理機制)
+6. [字數額度共享機制](#字數額度共享機制)
+7. [時間參數配置](#時間參數配置)
+8. [版本演進歷史](#版本演進歷史)
+
+---
+
+## 💡 核心設計理念
+
+### 🎯 最新架構（2025-11-22）
+
+```
+字幕顯示架構：
+┌─────────────────────────────┐
+│ displayBuffer (只存 Final)   │
+│   ├─ Final 句子 1 (淡化)     │
+│   ├─ Final 句子 2 (淡化)     │
+│   └─ Final 句子 3 (最新)     │
+├─────────────────────────────┤
+│ interimSubtitle (臨時變量)   │
+│   └─ Interim 臨時文字...     │
+└─────────────────────────────┘
+     ↓
+總字數 = Buffer 字數 + Interim 字數 ≤ 50
+```
+
+**關鍵原則**：
+1. ✅ **Buffer 只存 Final**：最準確的內容
+2. ✅ **Interim 只臨時顯示**：不污染 Buffer
+3. ✅ **共享 50 字額度**：動態分配，版面乾淨
+4. ✅ **定時自動清理**：每 1 秒清理，不依賴 Final
 
 ---
 
@@ -23,21 +52,22 @@
 | 特性 | **Final 結果** | **Interim 結果** |
 |-----|--------------|----------------|
 | **觸發條件** | `isFinal === true` | `isFinal === false` |
-| **代碼位置** | content.js:354-518 | content.js:519-596 |
+| **存儲位置** | `displayBuffer` 陣列 | `interimSubtitle` 變量 |
+| **是否加入 Buffer** | ✅ 是 | ❌ 否 |
 | **重複檢測** | ✅ 複雜（累積文字檢測） | ❌ 無 |
-| **智能斷句** | ✅ `smartSplit()` | ✅ `findSplitPoint()` |
-| **Buffer 來源標記** | `source: 'final'` | `source: 'interim'` |
-| **最小顯示時間** | 3 秒 (`MIN_DISPLAY_TIME`) | 2 秒 (`MIN_INTERIM_DISPLAY_TIME`) |
-| **清理舊 interim** | ✅ 清理年齡 > 5 秒的 interim | ❌ 不清理 |
+| **智能斷句** | ✅ `smartSplit()` | ❌ 無（直接顯示） |
+| **來源標記** | `source: 'final'` | 不加入 Buffer，無標記 |
+| **最小顯示時間** | 1.5 秒 | 無（被下一個 Interim 覆蓋） |
+| **清理舊 interim** | ✅ 清理年齡 > 5 秒的 interim | N/A（不在 Buffer 中） |
 | **加入歷史記錄** | ✅ 保存到 `subtitleHistory` | ❌ 不保存 |
-| **清理觸發時機** | Final 結果到來時 | Interim 斷句時 |
-| **去重過濾** | ✅ 完全匹配 + 高度重疊檢測 | ✅ 僅完全匹配 |
+| **顯示長度限制** | 每句最多 15 字，總共 50 字 | 動態分配（最多 35 字） |
+| **清除時機** | 定時清理（每 1 秒） | 被覆蓋或 Final 清空 |
 
 ---
 
 ## 🎯 Final 結果處理流程
 
-**位置**: `content.js:354-518`
+**位置**: `content.js:395-527`
 **觸發**: `displaySubtitle(text, isFinal=true)`
 
 ### 處理步驟
@@ -72,64 +102,63 @@ Final 結果到來
 │     ├─ displayBuffer.push({ text, timestamp, source: 'final' })
 │     └─ subtitleHistory.push({ text, timestamp, language })
 │
-├─ 步驟 6: Final 清理策略
-│  ├─ 清理策略 1: 按句子數
-│  │  └─ while (displayBuffer.length > MAX_DISPLAY_SENTENCES)
-│  │     ├─ 檢查最舊句子顯示時間 >= MIN_DISPLAY_TIME (3秒)
-│  │     ├─ 符合 → shift() 移除最舊句子
-│  │     └─ 不符合 → break (暫停清理)
-│  │
-│  └─ 清理策略 2: 按總字符數
-│     └─ while (totalChars > MAX_TOTAL_CHARS)
-│        ├─ 檢查最舊句子顯示時間 >= MIN_DISPLAY_TIME (3秒)
-│        ├─ 符合 → shift() 移除最舊句子
-│        └─ 不符合 → break (暫停清理)
+├─ 步驟 6: 調用清理函數
+│  └─ cleanupBuffer() 清理過期句子
 │
-└─ 步驟 7: 更新顯示
+├─ 步驟 7: 清空 Interim
+│  └─ interimSubtitle = '' （Final 出現，清空臨時文字）
+│
+└─ 步驟 8: 更新顯示
    └─ updateSubtitleDisplay()
 ```
 
 ### 關鍵代碼片段
 
 ```javascript
-// 1. 重複檢測
-if (normalized === lastFinalTranscript) {
-  return; // 跳過相同結果
-}
-
-// 2. 累積文字檢測
-if (lastFinalTranscript && (normalized.includes(lastFinalTranscript) ||
-    lastFinalTranscript.includes(normalized))) {
-  if (normalized.length <= lastFinalTranscript.length) {
-    return; // 新文字較短，跳過
+if (isFinal) {
+  // 1. 重複檢測
+  if (normalized === lastFinalTranscript) {
+    return; // 跳過相同結果
   }
-  const newPart = normalized.replace(lastFinalTranscript, '').trim();
-  // 使用 newPart...
-}
 
-// 3. 清理過舊的 interim (年齡 > 5 秒)
-displayBuffer = displayBuffer.filter(item => {
-  if (item.source === 'final') return true; // 保留所有 final
-
-  const age = Date.now() - item.timestamp;
-  if (age < 5000) {
-    return true;  // 保留年齡 < 5 秒的 interim
-  } else {
-    console.log('[Content] 清理過舊的 interim');
-    return false; // 移除年齡 >= 5 秒的 interim
+  // 2. 累積文字檢測
+  if (lastFinalTranscript && normalized.includes(lastFinalTranscript)) {
+    // 提取新增部分...
   }
-});
 
-// 4. Final 清理策略（帶最小顯示時間保護）
-while (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
-  const oldest = displayBuffer[0];
-  const displayDuration = Date.now() - oldest.timestamp;
+  // 3. 清理過舊的 interim (年齡 > 5 秒)
+  displayBuffer = displayBuffer.filter(item => {
+    if (item.source === 'final') return true;
+    const age = Date.now() - item.timestamp;
+    return age < 5000;
+  });
 
-  if (displayDuration >= MIN_DISPLAY_TIME) { // 3000ms
-    displayBuffer.shift(); // 移除最舊句子
-  } else {
-    break; // 顯示時間不夠，暫停清理
-  }
+  // 4. 智能斷句
+  const sentences = smartSplit(normalized);
+
+  // 5. 去重過濾
+  const newSentences = sentences.filter(sentence => {
+    // 檢查重複...
+  });
+
+  // 6. 加入 Buffer
+  newSentences.forEach(sentence => {
+    displayBuffer.push({
+      text: sentence,
+      timestamp: Date.now(),
+      source: 'final'
+    });
+    subtitleHistory.push({ text: sentence, ... });
+  });
+
+  // 7. 調用清理函數
+  cleanupBuffer();
+
+  // 8. 清空 Interim
+  interimSubtitle = '';
+
+  // 9. 更新顯示
+  updateSubtitleDisplay();
 }
 ```
 
@@ -137,234 +166,220 @@ while (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
 
 ## ⚡ Interim 結果處理流程
 
-**位置**: `content.js:519-596`
+**位置**: `content.js:563-601`
 **觸發**: `displaySubtitle(text, isFinal=false)`
 
-### 處理步驟
+### 處理步驟（簡化版）
 
 ```
 Interim 結果到來
 │
-├─ 步驟 1: 長度檢查
-│  └─ if (text.length > MAX_CHARS_PER_LINE) // > 15 字元
-│     └─ ✅ 需要斷句
-│        │
-│        ├─ 步驟 2: 尋找斷句點
-│        │  └─ findSplitPoint(text, MAX_CHARS_PER_LINE)
-│        │
-│        ├─ 步驟 3: 分割文字
-│        │  ├─ 前半部分 → 完整句子（加入 Buffer）
-│        │  │  ├─ normalizeText(text.slice(0, splitPoint))
-│        │  │  ├─ 檢查是否已存在於 displayBuffer
-│        │  │  └─ 不存在 → displayBuffer.push({
-│        │  │                  text,
-│        │  │                  timestamp: Date.now(),
-│        │  │                  source: 'interim'
-│        │  │                })
-│        │  │
-│        │  └─ 後半部分 → 臨時顯示（不加入 Buffer）
-│        │     └─ interimSubtitle = remainingPart
-│        │        updateSubtitleDisplay(remainingPart)
-│        │
-│        └─ 步驟 4: Interim 清理策略
-│           ├─ 清理策略 1: 按句子數
-│           │  └─ while (displayBuffer.length > MAX_DISPLAY_SENTENCES)
-│           │     ├─ 檢查最舊句子的最小顯示時間:
-│           │     │  ├─ Final → MIN_DISPLAY_TIME (3秒)
-│           │     │  └─ Interim → MIN_INTERIM_DISPLAY_TIME (2秒)
-│           │     ├─ 符合 → shift() 移除最舊句子
-│           │     └─ 不符合 → break (暫停清理)
-│           │
-│           └─ 清理策略 2: 按總字符數
-│              └─ while (totalChars > MAX_TOTAL_CHARS)
-│                 ├─ 檢查最舊句子的最小顯示時間
-│                 ├─ 符合 → shift() 移除最舊句子
-│                 └─ 不符合 → break (暫停清理)
+├─ 步驟 1: 計算 Buffer 總字數
+│  └─ bufferTotalChars = Σ(displayBuffer[i].text.length)
 │
-└─ 步驟 5: 更新顯示
-   └─ updateSubtitleDisplay(remainingPart)
+├─ 步驟 2: 計算剩餘額度
+│  └─ remainingQuota = 50 - bufferTotalChars
+│
+├─ 步驟 3: 確定 Interim 可顯示字數
+│  └─ interimMaxChars = max(0, min(remainingQuota, 35))
+│
+├─ 步驟 4: 截取 Interim 文字
+│  ├─ 如果 interimMaxChars > 0:
+│  │  ├─ text.length <= interimMaxChars → 完整顯示
+│  │  └─ text.length > interimMaxChars → 顯示 "...（最後 N 字）"
+│  └─ 如果 interimMaxChars = 0:
+│     └─ displayText = '' （Buffer 已滿，不顯示）
+│
+└─ 步驟 5: 更新臨時顯示（不加入 Buffer）
+   ├─ interimSubtitle = displayText
+   └─ updateSubtitleDisplay(displayText)
 ```
 
 ### 關鍵代碼片段
 
 ```javascript
-// 1. 長度檢查並斷句
-if (text.length > MAX_CHARS_PER_LINE) {
-  const splitPoint = findSplitPoint(text, MAX_CHARS_PER_LINE);
+else { // isFinal === false
+  // 1. 計算 Buffer (Final) 的總字數
+  const bufferTotalChars = displayBuffer.reduce((sum, item) =>
+    sum + item.text.length, 0
+  );
 
-  if (splitPoint > 0) {
-    // 2. 前半部分加入 Buffer
-    const completedPart = normalizeText(text.slice(0, splitPoint));
-    const exists = displayBuffer.some(item => item.text === completedPart);
+  // 2. 計算剩餘額度
+  const remainingQuota = MAX_TOTAL_CHARS - bufferTotalChars; // 50 - Buffer
 
-    if (!exists && completedPart) {
-      displayBuffer.push({
-        text: completedPart,
-        timestamp: Date.now(),
-        source: 'interim' // 標記為臨時來源
-      });
+  // 3. Interim 可顯示字數 = min(剩餘額度, 35)
+  const MAX_INTERIM_DISPLAY_CHARS = 35;
+  const interimMaxChars = Math.max(0, Math.min(remainingQuota, MAX_INTERIM_DISPLAY_CHARS));
 
-      // 3. Interim 清理策略（根據來源使用不同最小顯示時間）
-      while (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
-        const oldest = displayBuffer[0];
-        const displayDuration = Date.now() - oldest.timestamp;
-
-        // ⭐ 關鍵：根據來源決定最小顯示時間
-        const minTime = oldest.source === 'final'
-          ? MIN_DISPLAY_TIME          // 3000ms (Final)
-          : MIN_INTERIM_DISPLAY_TIME; // 2000ms (Interim)
-
-        if (displayDuration >= minTime) {
-          displayBuffer.shift(); // 移除最舊句子
-        } else {
-          break; // 顯示時間不夠，暫停清理
-        }
-      }
-
-      // 按總字符數清理（同樣邏輯）
-      let totalChars = displayBuffer.reduce((sum, item) => sum + item.text.length, 0);
-      while (totalChars > MAX_TOTAL_CHARS && displayBuffer.length > 1) {
-        const oldest = displayBuffer[0];
-        const displayDuration = Date.now() - oldest.timestamp;
-        const minTime = oldest.source === 'final'
-          ? MIN_DISPLAY_TIME
-          : MIN_INTERIM_DISPLAY_TIME;
-
-        if (displayDuration >= minTime) {
-          const removed = displayBuffer.shift();
-          totalChars -= removed.text.length;
-        } else {
-          break;
-        }
-      }
+  // 4. 根據可用額度截取 Interim 文字
+  let displayText = '';
+  if (interimMaxChars > 0) {
+    if (text.length > interimMaxChars) {
+      displayText = '...' + text.slice(-interimMaxChars);
+    } else {
+      displayText = text;
     }
+  } else {
+    // Buffer 已滿額，Interim 無法顯示
+    displayText = '';
+  }
 
-    // 4. 後半部分臨時顯示
-    const remainingPart = text.slice(splitPoint).trim();
-    interimSubtitle = remainingPart;
-    updateSubtitleDisplay(remainingPart);
+  // 5. 直接顯示在臨時區域，不加入 displayBuffer
+  interimSubtitle = displayText;
+  updateSubtitleDisplay(displayText);
+}
+```
+
+---
+
+## 🔄 定時清理機制
+
+**位置**: `content.js:350-392` (cleanupBuffer 函數)
+**觸發**: 每 1 秒自動執行（`setInterval`）
+
+### 清理邏輯
+
+```
+定時清理器（每 1 秒）
+│
+├─ 檢查 Buffer 是否為空
+│  └─ 空 → 跳過
+│
+├─ 清理策略 1: 按句子數
+│  └─ while (displayBuffer.length > 3)
+│     ├─ 檢查最舊句子顯示時間 >= 1.5 秒
+│     ├─ 符合 → shift() 移除最舊句子
+│     └─ 不符合 → break (暫停清理)
+│
+├─ 清理策略 2: 按總字符數
+│  └─ while (totalChars > 50)
+│     ├─ 檢查最舊句子顯示時間 >= 1.5 秒
+│     ├─ 符合 → shift() 移除最舊句子
+│     └─ 不符合 → break (暫停清理)
+│
+└─ 如果有清理，更新顯示
+   └─ updateSubtitleDisplay(interimSubtitle)
+```
+
+### 關鍵代碼
+
+```javascript
+// 啟動定時清理器（在 init() 函數中）
+setInterval(() => {
+  cleanupBuffer();
+}, 1000);
+
+// cleanupBuffer() 函數
+function cleanupBuffer() {
+  if (displayBuffer.length === 0) return;
+
+  const currentTime = Date.now();
+  let cleaned = false;
+
+  // 1. 按句子數清理
+  while (displayBuffer.length > MAX_DISPLAY_SENTENCES) { // > 3
+    const oldest = displayBuffer[0];
+    const displayDuration = currentTime - oldest.timestamp;
+
+    if (displayDuration >= MIN_DISPLAY_TIME) { // >= 1500ms
+      const removed = displayBuffer.shift();
+      cleaned = true;
+      console.log('🗑️ 定時清理（超過句數）');
+    } else {
+      break;
+    }
+  }
+
+  // 2. 按總字符數清理
+  let totalChars = displayBuffer.reduce((sum, item) => sum + item.text.length, 0);
+  while (totalChars > MAX_TOTAL_CHARS && displayBuffer.length > 1) {
+    const oldest = displayBuffer[0];
+    const displayDuration = currentTime - oldest.timestamp;
+
+    if (displayDuration >= MIN_DISPLAY_TIME) {
+      const removed = displayBuffer.shift();
+      totalChars -= removed.text.length;
+      cleaned = true;
+      console.log('🗑️ 定時清理（超過字符）');
+    } else {
+      break;
+    }
+  }
+
+  // 如果清理了內容，更新顯示
+  if (cleaned) {
+    updateSubtitleDisplay(interimSubtitle);
   }
 }
 ```
 
----
+### 優勢
 
-## 🔑 關鍵差異總結
-
-### 1. 重複檢測策略
-
-#### Final
-- ✅ **完全相同檢測**: `normalized === lastFinalTranscript`
-- ✅ **累積文字檢測**: 檢查 includes 關係，提取新增部分
-- ✅ **高度重疊檢測**: 長度差距 <= 3 的句子視為重複
-
-#### Interim
-- ✅ **僅完全匹配**: 只檢查 `displayBuffer.some(item => item.text === completedPart)`
-- ❌ 無累積檢測（Interim 變化太快，無需複雜檢測）
+| 特性 | 舊機制（只在 Final 時清理） | 新機制（定時清理） |
+|-----|------------------------|----------------|
+| **清理觸發** | 只在 Final 結果時 | 每 1 秒自動檢查 |
+| **最大延遲** | 可能 30+ 秒 | 最多 1.5 + 1 = 2.5 秒 |
+| **Buffer 累積** | 可能 10+ 項 | 最多 3-4 項 |
+| **依賴性** | 依賴 Final 結果 | 完全獨立 |
 
 ---
 
-### 2. 清理觸發時機
+## 💰 字數額度共享機制
 
-#### Final 清理時機
-```javascript
-// 當 Final 結果到來時執行兩種清理:
+### 設計原則
 
-// 清理 1: 移除過舊的 interim (年齡 > 5 秒)
-displayBuffer = displayBuffer.filter(item => {
-  if (item.source === 'final') return true;
-  return (Date.now() - item.timestamp) < 5000;
-});
+**總額度**: 50 字（Final + Interim 共享）
+**動態分配**: 根據 Buffer 使用情況動態調整 Interim 可用額度
 
-// 清理 2: 按限制清理所有項目（FIFO，3 秒保護）
-while (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
-  if (displayDuration >= MIN_DISPLAY_TIME) { // 3000ms
-    displayBuffer.shift();
-  }
-}
+### 分配邏輯
+
+```
+總額度 = 50 字
+Buffer 使用 = X 字
+剩餘額度 = 50 - X
+Interim 可顯示 = min(剩餘額度, 35)
 ```
 
-#### Interim 清理時機
-```javascript
-// 當 Interim 斷句時執行清理:
+### 實際案例
 
-// 只按限制清理（FIFO，根據來源使用不同時間保護）
-while (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
-  const minTime = oldest.source === 'final'
-    ? MIN_DISPLAY_TIME          // 3000ms
-    : MIN_INTERIM_DISPLAY_TIME; // 2000ms
+| Buffer 字數 | 剩餘額度 | Interim 可顯示 | 總字數 |
+|-----------|---------|--------------|-------|
+| 0 字 | 50 字 | 35 字 (min(50, 35)) | 35 字 |
+| 10 字 | 40 字 | 35 字 (min(40, 35)) | 45 字 |
+| 20 字 | 30 字 | 30 字 (min(30, 35)) | 50 字 |
+| 30 字 | 20 字 | 20 字 (min(20, 35)) | 50 字 |
+| 40 字 | 10 字 | 10 字 (min(10, 35)) | 50 字 |
+| 50 字 | 0 字 | 0 字 (min(0, 35)) | 50 字 |
+| 60 字 | -10 字 | 0 字 (max(0, -10)) | 60 字* |
 
-  if (displayDuration >= minTime) {
-    displayBuffer.shift();
-  }
-}
+*註：Buffer 超過 50 字時會觸發清理，實際不會到 60 字
+
+### 視覺效果
+
 ```
+場景 1：Buffer 較少 (20 字)
+┌─────────────────────────┐
+│ Final 句子 (20字)        │ ← Buffer: 20 字
+│ ...Interim 30 字內容     │ ← Interim: 30 字
+└─────────────────────────┘
+總計：50 字 ✅
 
-**差異說明：**
-- Final 清理會先移除「過舊的 interim」(> 5 秒)，因為 Final 已經來了，舊的 Interim 沒用了
-- Interim 清理只按限制清理，且根據項目來源使用不同的最小顯示時間
+場景 2：Buffer 中等 (35 字)
+┌─────────────────────────┐
+│ Final 句子 1 (15字)      │
+│ Final 句子 2 (20字)      │ ← Buffer: 35 字
+│ ...Interim 15字          │ ← Interim: 15 字
+└─────────────────────────┘
+總計：50 字 ✅
 
----
-
-### 3. 最小顯示時間保護
-
-```javascript
-// Final 清理時 (content.js:476)
-if (displayDuration >= MIN_DISPLAY_TIME) { // 固定 3000ms
-  displayBuffer.shift();
-}
-
-// Interim 清理時 (content.js:552, 570)
-const minTime = oldest.source === 'final'
-  ? MIN_DISPLAY_TIME          // 3000ms
-  : MIN_INTERIM_DISPLAY_TIME; // 2000ms
-
-if (displayDuration >= minTime) {
-  displayBuffer.shift();
-}
-```
-
-**設計理念：**
-- Final 句子需要較長的顯示時間（3 秒），因為更準確，用戶需要時間閱讀
-- Interim 句子可以較快移除（2 秒），因為可能不準確，需要快速更新
-
----
-
-### 4. 斷句策略差異
-
-#### Final: `smartSplit()` - 智能斷句
-- 按標點符號分割（。！？等）
-- 按空格分割
-- 支援多種斷句規則
-- 返回多個句子的陣列
-
-#### Interim: `findSplitPoint()` - 簡單斷點
-- 尋找適合的斷句位置
-- 基於 `MAX_CHARS_PER_LINE` (15 字)
-- 只切一次（前半 + 後半）
-- 前半加入 Buffer，後半臨時顯示
-
----
-
-### 5. 歷史記錄處理
-
-#### Final
-```javascript
-// 每個新句子都加入歷史記錄
-subtitleHistory.push({
-  text: sentence,
-  timestamp: Date.now(),
-  language: currentLanguage
-});
-
-// 保存到 Chrome Storage
-chrome.storage.local.set({ subtitleHistory });
-```
-
-#### Interim
-```javascript
-// ❌ 不加入歷史記錄
-// 原因：Interim 可能不準確，不應該保存
+場景 3：Buffer 已滿 (50 字)
+┌─────────────────────────┐
+│ Final 句子 1 (15字)      │
+│ Final 句子 2 (20字)      │
+│ Final 句子 3 (15字)      │ ← Buffer: 50 字
+│ (Interim 無法顯示)       │ ← Interim: 0 字
+└─────────────────────────┘
+總計：50 字 ✅
 ```
 
 ---
@@ -376,110 +391,110 @@ chrome.storage.local.set({ subtitleHistory });
 ```javascript
 const MAX_DISPLAY_SENTENCES = 3;      // 最多顯示 3 句
 const MAX_CHARS_PER_LINE = 15;        // 每行最多 15 字元
-const MAX_TOTAL_CHARS = 50;           // 總共最多 50 字元
-const MIN_DISPLAY_TIME = 3000;        // Final 句子至少顯示 3 秒
-const MIN_INTERIM_DISPLAY_TIME = 2000;// Interim 句子至少顯示 2 秒
+const MAX_TOTAL_CHARS = 50;           // 總共最多 50 字元（Final + Interim 共享）
+const MIN_DISPLAY_TIME = 1500;        // Final 句子至少顯示 1.5 秒
+const MIN_INTERIM_DISPLAY_TIME = 2000;// 已棄用（Interim 不加入 Buffer）
 
-// 清理過舊 interim 的時間閾值
-const STALE_INTERIM_THRESHOLD = 5000; // 5 秒（代碼中寫死，未定義常數）
+// 其他時間參數
+const HEARTBEAT_INTERVAL = 1000;      // 心跳檢測間隔 1 秒
+const HEARTBEAT_TIMEOUT = 3000;       // 心跳超時 3 秒
+const CLEANUP_INTERVAL = 1000;        // 清理檢查間隔 1 秒
+
+// 硬編碼的時間閾值
+const STALE_INTERIM_THRESHOLD = 5000; // 清理過舊 interim 的閾值 5 秒
 ```
 
 ### 時間參數用途
 
 | 參數 | 值 | 用途 |
 |-----|---|------|
-| `MIN_DISPLAY_TIME` | 3000ms | Final 句子的最小顯示時間 |
-| `MIN_INTERIM_DISPLAY_TIME` | 2000ms | Interim 句子的最小顯示時間 |
-| `STALE_INTERIM_THRESHOLD` | 5000ms | Final 出現時清理 interim 的年齡閾值 |
-
-### 清理邏輯中的時間判斷
-
-```javascript
-// 場景 1: Final 清理時，固定使用 MIN_DISPLAY_TIME (3秒)
-if (displayDuration >= MIN_DISPLAY_TIME) { ... }
-
-// 場景 2: Interim 清理時，根據來源動態選擇
-const minTime = oldest.source === 'final'
-  ? MIN_DISPLAY_TIME          // 3秒
-  : MIN_INTERIM_DISPLAY_TIME; // 2秒
-
-// 場景 3: Final 出現時清理過舊 interim，固定閾值 5 秒
-const age = now - item.timestamp;
-if (age < 5000) { return true; } // 保留
-else { return false; }           // 移除
-```
+| `MIN_DISPLAY_TIME` | 1500ms (1.5秒) | Final 句子的最小顯示時間 |
+| `HEARTBEAT_TIMEOUT` | 3000ms (3秒) | 語音識別卡住超時時間 |
+| `CLEANUP_INTERVAL` | 1000ms (1秒) | 定時清理檢查間隔 |
+| `STALE_INTERIM_THRESHOLD` | 5000ms (5秒) | Final 出現時清理 interim 的年齡閾值 |
 
 ---
 
-## 💡 設計理念
+## 📈 版本演進歷史
 
-### 1. Final 是權威來源
-- **高準確度**: Web Speech API 的最終識別結果
-- **需要去重**: 避免重複顯示相同內容
-- **保存歷史**: 作為準確的字幕記錄
-- **顯示時間長**: 3 秒，確保用戶有足夠時間閱讀
+### 版本 3 (2025-11-22 最新)
+**重大改進：定時清理 + 字數共享**
 
-### 2. Interim 是即時預覽
-- **低延遲**: 快速顯示，提升用戶體驗
-- **可能不準確**: 識別過程中的臨時結果
-- **不保存歷史**: 避免不準確的內容污染記錄
-- **顯示時間短**: 2 秒，快速更新
+✅ **新增功能**：
+- 定時清理器（每 1 秒自動清理 Buffer）
+- Final + Interim 共享 50 字額度（動態分配）
+- Interim 完全不加入 Buffer，只臨時顯示
 
-### 3. 混合策略的優勢
-- **Buffer 可混合**: 同時包含 Final 和 Interim 項目
-- **來源標記**: 通過 `source` 欄位區分來源
-- **差異化處理**: 清理時根據來源使用不同的最小顯示時間
-- **自動清理**: Final 出現時清理過舊的 Interim（> 5 秒）
+✅ **參數調整**：
+- MIN_DISPLAY_TIME: 3 秒 → 1.5 秒
+- HEARTBEAT_TIMEOUT: 5 秒 → 3 秒
 
-### 4. FIFO (First In First Out) 清理順序
-```javascript
-// 總是移除最舊的項目（displayBuffer[0]）
-displayBuffer.shift();
-```
-- 確保字幕按時間順序清理
-- 避免中間或末尾的句子突然消失
-- 符合用戶閱讀習慣
+✅ **效果**：
+- 句子最多顯示 2.5 秒（1.5s + 1s 延遲）
+- Buffer 不會累積超過 3-4 項
+- 總字數嚴格控制在 50 字以內
+- 版面更乾淨、更穩定
+
+---
+
+### 版本 2 (2025-11-21)
+**Interim 簡化處理**
+
+✅ **改進**：
+- Interim 不再加入 Buffer
+- 移除 Interim 複雜的斷句和清理邏輯
+- Interim 只做臨時顯示
+
+❌ **問題**：
+- 清理只在 Final 時觸發
+- 句子可能顯示 30+ 秒
+- Buffer 可能累積 10+ 項
+
+---
+
+### 版本 1 (2025-11-21 初始)
+**Interim 加入 Buffer + 完整清理**
+
+✅ **功能**：
+- Interim 斷句並加入 Buffer
+- Interim 有完整清理邏輯
+- MIN_INTERIM_DISPLAY_TIME = 2 秒
+
+❌ **問題**：
+- Interim 快速累積（每 0.1 秒一個）
+- 去重檢查不足
+- 清理邏輯與累積衝突
 
 ---
 
 ## 🔧 故障排除
 
 ### 問題 1: 字幕累積過多
-**可能原因**: 清理邏輯未觸發
-**檢查點**:
-- 是否有 Final 或 Interim 斷句事件？
-- 最小顯示時間是否太長？
-- Console 是否有清理相關 log？
+**檢查**:
+- Console 是否有 "🗑️ 定時清理" 日誌？
+- Buffer 項目數是否超過 3-4 項？
+
+**解決**:
+- 確認定時清理器已啟動
+- 檢查 MIN_DISPLAY_TIME 是否太長
 
 ### 問題 2: 字幕消失太快
-**可能原因**: 最小顯示時間太短
 **調整參數**:
 ```javascript
-const MIN_DISPLAY_TIME = 3000;        // 調高此值（如 5000）
-const MIN_INTERIM_DISPLAY_TIME = 2000;// 調高此值（如 3000）
+const MIN_DISPLAY_TIME = 2000; // 從 1500ms 改為 2000ms
 ```
 
-### 問題 3: 中間的句子突然消失
-**可能原因**: 清理邏輯錯誤（已修復）
-**已修復**: 使用 `shift()` 確保 FIFO 順序
+### 問題 3: Interim 不顯示
+**檢查**:
+- Console 是否顯示 "Buffer 已滿額"？
+- Buffer 總字數是否 >= 50？
 
-### 問題 4: Interim 字幕一直不清理
-**可能原因**: 缺少 Final 結果觸發清理
-**解決方案**: 已在 Interim 斷句時加入完整清理邏輯
+**原因**: Buffer 已用完 50 字額度，Interim 無剩餘空間
 
----
-
-## 📝 版本歷史
-
-### 2025-11-22 (當前版本)
-- ✅ Interim 加入完整清理邏輯（按句數 + 按字符數）
-- ✅ Interim 清理時根據來源使用不同最小顯示時間
-- ✅ Final 清理時移除年齡 > 5 秒的 interim
-- ✅ 使用 FIFO (`shift()`) 確保清理順序
-
-### 2025-11-21
-- ✅ 恢復 Interim 顯示功能
-- ✅ 調整心跳檢測參數（5 秒超時）
+### 問題 4: 總字數超過 50
+**檢查**:
+- 是否暫時超過（清理延遲 1 秒）？
+- 定時清理器是否正常運作？
 
 ---
 
@@ -493,3 +508,4 @@ const MIN_INTERIM_DISPLAY_TIME = 2000;// 調高此值（如 3000）
 
 **最後更新**: 2025-11-22
 **維護者**: Claude (AI Assistant)
+**當前版本**: v3 (定時清理 + 字數共享)
