@@ -394,7 +394,7 @@ function cleanupBuffer() {
 
   // 如果清理了內容，更新顯示
   if (cleaned) {
-    updateSubtitleDisplay(interimSubtitle);
+    updateSubtitleDisplay();
   }
 }
 
@@ -468,188 +468,133 @@ function displaySubtitle(text, isFinal) {
   if (!text) return;
 
   if (isFinal) {
-    console.log('[Content] === Final 結果 ===');
-    console.log('[Content] 原始文字 (', text.length, '字):', text);
+    // ========== Final 結果處理：靜默校正 ==========
+    console.log('[Content] Final (', text.length, '字):', text.substring(0, 30) + '...');
 
     const normalized = normalizeText(text);
 
-    // 改進的重複檢測：檢查是否和上一次的 final 完全相同
+    // 避免重複處理相同的 Final
     if (normalized === lastFinalTranscript) {
-      console.log('[Content] ❌ 和上一次 final 結果相同，跳過');
+      console.log('[Content] ❌ 重複的 Final，跳過');
       return;
     }
 
-    // 額外檢查：如果新文字包含在上一次的文字中，或上一次的文字包含在新文字中
-    // 這可能是 API 的累積發送，取較長的那個
-    if (lastFinalTranscript && (normalized.includes(lastFinalTranscript) || lastFinalTranscript.includes(normalized))) {
-      console.log('[Content] ⚠️ 偵測到累積文字');
-      console.log('[Content] 上次:', lastFinalTranscript.substring(0, 30) + '...');
-      console.log('[Content] 本次:', normalized.substring(0, 30) + '...');
-
-      // 如果新文字更短或相同，跳過（可能是重複）
-      if (normalized.length <= lastFinalTranscript.length) {
-        console.log('[Content] ❌ 新文字較短或相同，跳過');
-        return;
-      }
-
-      // 如果新文字更長，提取新增的部分
-      const newPart = normalized.replace(lastFinalTranscript, '').trim();
-      if (newPart.length < 2) {
-        console.log('[Content] ❌ 新增部分太短，跳過');
-        return;
-      }
-      console.log('[Content] ✅ 提取新增部分:', newPart);
-    }
-
-    // 更新最後的 final 結果
     lastFinalTranscript = normalized;
-    currentSubtitle = text;
-    interimSubtitle = '';
 
-    console.log('[Content] Buffer 清理前:', displayBuffer.length, '項');
-
-    // 不要立即清理所有 interim，只清理太舊的（超過5秒）
-    const now = Date.now();
-    const beforeCleanup = displayBuffer.length;
-    displayBuffer = displayBuffer.filter(item => {
-      // 保留所有 final
-      if (item.source === 'final') return true;
-
-      // interim 只保留最近 5 秒的
-      const age = now - item.timestamp;
-      if (age < 5000) {
-        return true;
-      } else {
-        console.log('[Content] 清理過舊的 interim:', item.text.substring(0, 20) + '...');
-        return false;
+    // 尋找 displayBuffer 中最後一個 interim 項目（最可能對應的）
+    let targetIndex = -1;
+    for (let i = displayBuffer.length - 1; i >= 0; i--) {
+      if (displayBuffer[i].source === 'interim') {
+        targetIndex = i;
+        break;
       }
-    });
-    const afterCleanup = displayBuffer.length;
-
-    if (beforeCleanup !== afterCleanup) {
-      console.log('[Content] 已清理', beforeCleanup - afterCleanup, '個過舊的 interim 項目');
     }
 
-    // 智能斷句 - 將長文字切分成多句
-    const sentences = smartSplit(normalized);
-    console.log('[Content] 斷句結果:', sentences.length, '句');
+    if (targetIndex >= 0) {
+      // 找到對應的 interim，進行校正
+      const interimItem = displayBuffer[targetIndex];
+      const similarity = calculateSimilarity(interimItem.text, normalized);
 
-    // 檢查每個句子是否已經在 buffer 中
-    const allTexts = displayBuffer.map(item => item.text);
-    const newSentences = sentences.filter(sentence => {
-      // 完全匹配檢查
-      if (allTexts.includes(sentence)) {
-        console.log('[Content] 句子已存在（完全匹配）:', sentence.substring(0, 20) + '...');
-        return false;
-      }
+      console.log('[Content] 📝 校正 Interim:', interimItem.text.substring(0, 20), '→', normalized.substring(0, 20), '相似度:', similarity.toFixed(2));
 
-      // 改進的重疊檢測：只有當相似度非常高時才認為是重疊
-      // 不再使用簡單的 includes，改用長度比較
-      const hasOverlap = allTexts.some(existing => {
-        const longer = existing.length > sentence.length ? existing : sentence;
-        const shorter = existing.length > sentence.length ? sentence : existing;
+      // 靜默更新為 Final 內容
+      displayBuffer[targetIndex] = {
+        text: normalized,
+        timestamp: interimItem.timestamp, // 保留原始時間戳
+        source: 'final', // 標記為已校正
+        corrected: similarity < 0.9 // 如果相似度低，標記為有校正
+      };
 
-        // 只有當短的完全包含在長的裡面，且長度差距很小時，才認為是重疊
-        if (longer.includes(shorter) && (longer.length - shorter.length) <= 3) {
-          console.log('[Content] 句子有高度重疊:', sentence.substring(0, 20) + '...');
-          return true;
-        }
-        return false;
-      });
-
-      return !hasOverlap;
-    });
-
-    console.log('[Content] 新增', newSentences.length, '個新句子');
-
-    // ========== 在加入新句子前，先清理出足夠空間 ==========
-    // 呼叫分層清理函數，確保總字數不會超過限制
-    if (newSentences.length > 0) {
-      cleanupBeforeAdd(newSentences);
+      updateSubtitleDisplay();
+    } else {
+      console.log('[Content] ⚠️ 找不到對應的 Interim，Final 可能太晚到達');
     }
 
-    // 加入新句子
-    newSentences.forEach(sentence => {
-      displayBuffer.push({
-        text: sentence,
-        timestamp: Date.now(),
-        source: 'final'
-      });
-
-      // 加入歷史記錄
-      subtitleHistory.push({
-        text: sentence,
-        timestamp: Date.now(),
-        language: currentLanguage
-      });
-
-      console.log('[Content] ✅ 新增:', sentence.substring(0, 30) + (sentence.length > 30 ? '...' : ''));
+    // 存入歷史記錄
+    subtitleHistory.push({
+      text: normalized,
+      timestamp: Date.now(),
+      language: currentLanguage
     });
 
-    // 注意：不需要在這裡再次呼叫 cleanupBuffer()
-    // 因為 cleanupBeforeAdd() 已經確保總字數在限制內
-    // 定時器會每秒自動清理，避免重複清理造成效能問題
-
-    // 限制歷史記錄長度
     if (subtitleHistory.length > 50) {
       subtitleHistory.shift();
     }
 
-    // 儲存到 storage
     chrome.storage.local.set({ subtitleHistory });
 
-    // 更新顯示
-    updateSubtitleDisplay();
-
-    console.log('[Content] Buffer 最終狀態:', displayBuffer.length, '項');
-
-    // 重置
-    lastTranscript = '';
-
   } else {
-    // ========== Interim 結果處理 ==========
-    // 策略：Interim 完全不加入 Buffer，只在臨時區域顯示
-    // 這樣 Buffer 只保留準確的 Final 句子，避免累積和混亂
+    // ========== Interim 結果處理：立即顯示 ==========
+    console.log('[Content] Interim (', text.length, '字):', text.substring(0, 30) + '...');
 
-    console.log('[Content] Interim 結果 (', text.length, '字):', text.substring(0, 30) + '...');
+    const normalized = normalizeText(text);
 
-    // ========== Final + Interim 共享 50 字額度（動態分配）==========
-    // 1. 計算 Buffer (Final) 的總字數
-    const bufferTotalChars = displayBuffer.reduce((sum, item) => sum + item.text.length, 0);
-    console.log('[Content] Buffer 總字數:', bufferTotalChars, '字');
-
-    // 2. 計算剩餘額度
-    const remainingQuota = MAX_TOTAL_CHARS - bufferTotalChars;
-    console.log('[Content] 剩餘字數額度:', remainingQuota, '字');
-
-    // 3. Interim 可顯示字數 = min(剩餘額度, 35)
-    const MAX_INTERIM_DISPLAY_CHARS = 35;
-    const interimMaxChars = Math.max(0, Math.min(remainingQuota, MAX_INTERIM_DISPLAY_CHARS));
-    console.log('[Content] Interim 可顯示:', interimMaxChars, '字');
-
-    // 4. 根據可用額度截取 Interim 文字
-    let displayText = '';
-    if (interimMaxChars > 0) {
-      if (text.length > interimMaxChars) {
-        displayText = '...' + text.slice(-interimMaxChars);
-        console.log('[Content] Interim 截取最後', interimMaxChars, '字');
-      } else {
-        displayText = text;
+    // 檢查是否需要更新最後一個 interim（同一句話的持續更新）
+    let shouldUpdate = false;
+    if (displayBuffer.length > 0) {
+      const lastItem = displayBuffer[displayBuffer.length - 1];
+      if (lastItem.source === 'interim') {
+        // 如果新的 Interim 包含舊的，或者很相似，就是同一句話的更新
+        if (normalized.includes(lastItem.text) || lastItem.text.includes(normalized)) {
+          shouldUpdate = true;
+        }
       }
-    } else {
-      console.log('[Content] ⚠️ Buffer 已滿額，Interim 無法顯示');
     }
 
-    // 直接顯示在臨時區域，不加入 displayBuffer
-    interimSubtitle = displayText;
-    lastTranscript = text;
-    updateSubtitleDisplay(displayText);
+    if (shouldUpdate) {
+      // 更新最後一個 interim
+      displayBuffer[displayBuffer.length - 1] = {
+        text: normalized,
+        timestamp: Date.now(),
+        source: 'interim'
+      };
+      console.log('[Content] 🔄 更新 Interim');
+    } else {
+      // 新增一個 interim 項目
+      // 先檢查是否需要清理
+      const totalChars = displayBuffer.reduce((sum, item) => sum + item.text.length, 0);
+      const afterAddChars = totalChars + normalized.length;
+
+      if (afterAddChars > MAX_TOTAL_CHARS) {
+        // 需要清理，呼叫分層清理
+        cleanupBeforeAdd([normalized]);
+      }
+
+      displayBuffer.push({
+        text: normalized,
+        timestamp: Date.now(),
+        source: 'interim'
+      });
+
+      console.log('[Content] ➕ 新增 Interim');
+    }
+
+    updateSubtitleDisplay();
   }
 
   // 自動顯示字幕
   if (!isVisible) {
     showSubtitleUI();
   }
+}
+
+// 計算兩個字串的相似度（簡單版本：基於最長公共子序列）
+function calculateSimilarity(str1, str2) {
+  if (!str1 || !str2) return 0;
+  if (str1 === str2) return 1;
+
+  const longer = str1.length > str2.length ? str1 : str2;
+  const shorter = str1.length > str2.length ? str2 : str1;
+
+  // 簡單的相似度計算：看短的字串有多少比例包含在長的字串中
+  let matches = 0;
+  for (let i = 0; i < shorter.length; i++) {
+    if (longer.includes(shorter[i])) {
+      matches++;
+    }
+  }
+
+  return matches / longer.length;
 }
 
 // 智能斷句 - 將長文字切分成多個短句
@@ -705,7 +650,7 @@ function findSplitPoint(text, maxLength) {
 }
 
 // 更新字幕顯示
-function updateSubtitleDisplay(interimText = '') {
+function updateSubtitleDisplay() {
   // 清空現有內容
   subtitleText.innerHTML = '';
 
@@ -713,6 +658,15 @@ function updateSubtitleDisplay(interimText = '') {
   displayBuffer.forEach((item, index) => {
     const span = document.createElement('span');
     span.className = 'subtitle-line';
+
+    // 根據來源添加樣式
+    if (item.source === 'interim') {
+      span.classList.add('interim'); // Interim 字幕樣式（可能會變動）
+    } else if (item.source === 'final') {
+      if (item.corrected) {
+        span.classList.add('corrected'); // Final 校正過的字幕（可加閃爍效果）
+      }
+    }
 
     // 舊的句子加上淡化效果
     if (index < displayBuffer.length - 1) {
@@ -723,18 +677,10 @@ function updateSubtitleDisplay(interimText = '') {
     subtitleText.appendChild(span);
 
     // 在句子之間加上分隔（換行）
-    if (index < displayBuffer.length - 1 || interimText) {
+    if (index < displayBuffer.length - 1) {
       subtitleText.appendChild(document.createElement('br'));
     }
   });
-
-  // 如果有臨時文字，顯示在最後
-  if (interimText) {
-    const span = document.createElement('span');
-    span.className = 'subtitle-line interim';
-    span.textContent = interimText;
-    subtitleText.appendChild(span);
-  }
 }
 
 // 顯示字幕 UI
