@@ -218,6 +218,62 @@ function displaySubtitle(text, isFinal) {
 
 ---
 
+### 🔧 2025-11-21 深夜 - 為 Interim 添加完整清理邏輯
+
+#### 用戶關鍵發現
+
+通過 Console 日誌分析，用戶發現：
+
+**只顯示 Final 時：**
+- ✅ 延遲正常
+- ✅ 清理邏輯正常運作
+- ❌ 但延遲太高（5-10秒）
+
+**加入 Interim 後：**
+- ✅ 延遲低（即時）
+- ❌ 所有問題回來了：累積、不清除、超長句子
+- **根本原因：全部都是 Interim，沒有 Final！**
+
+#### Console 日誌證據
+
+```
+[Content] Interim 過長 ( 32 字)，自動斷句
+[Content] ⭕ 心跳檢測：距離上次結果 0 秒
+```
+
+沒有看到 `[Content] === Final 結果 ===` 或 `[Content] Buffer 清理前`
+
+**結論：Final 的清理邏輯從未被觸發！**
+
+#### 修復方案
+
+**為 Interim 添加完整的清理邏輯：**
+
+1. **新增 Interim 專屬最小顯示時間** (extension/content/content.js:19)
+```javascript
+const MIN_DISPLAY_TIME = 3000;        // Final: 3秒
+const MIN_INTERIM_DISPLAY_TIME = 2000; // Interim: 2秒（更快清除）
+```
+
+2. **Interim 斷句時的完整清理** (extension/content/content.js:546-581)
+   - 按句子數清理（帶最小顯示時間保護）
+   - 按總字符數清理（帶最小顯示時間保護）
+   - 自動判斷 final/interim 使用不同的最小顯示時間
+   - 詳細的調試日誌
+
+3. **清理邏輯觸發時機**
+   - **Final 處理時**：清理過舊的 interim + 按限制清理 final
+   - **Interim 斷句時**：立即按限制清理（現在有保護機制）
+
+#### 預期效果
+
+- ✅ Interim 即時顯示（低延遲）
+- ✅ 不會無限累積（有清理機制）
+- ✅ 用戶有足夠時間閱讀（最小顯示 2 秒）
+- ✅ Final/Interim 混合時清理邏輯正確
+
+---
+
 ## 待辦事項
 
 - [ ] 深入調查字幕卡住的根本原因
