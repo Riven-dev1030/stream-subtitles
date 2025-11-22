@@ -15,6 +15,8 @@ let displayBuffer = []; // 最多保存 3 句
 const MAX_DISPLAY_SENTENCES = 3;
 const MAX_CHARS_PER_LINE = 15; // 每行最多 15 字元（依用戶建議調整）
 const MAX_TOTAL_CHARS = 50; // 總共最多 50 字元，超過就清理
+const MIN_DISPLAY_TIME = 3000; // Final 句子至少顯示 3 秒
+const MIN_INTERIM_DISPLAY_TIME = 2000; // Interim 句子至少顯示 2 秒
 
 // 上一次的辨識文字（用於檢測增量）
 let lastTranscript = '';
@@ -462,8 +464,7 @@ function displaySubtitle(text, isFinal) {
       console.log('[Content] ✅ 新增:', sentence.substring(0, 30) + (sentence.length > 30 ? '...' : ''));
     });
 
-    // ========== 改進的 Buffer 清理策略 ==========
-    const MIN_DISPLAY_TIME = 3000; // 每個句子至少顯示 3 秒
+    // ========== Final Buffer 清理策略 ==========
     const currentTime = Date.now();
 
     // 1. 先按句子數清理（但要確保最舊的句子已經顯示夠久）
@@ -541,16 +542,41 @@ function displaySubtitle(text, isFinal) {
 
           console.log('[Content] ✅ Interim 斷句:', completedPart.substring(0, 30) + '...');
 
-          // 按句子數和字符數雙重限制清理
+          // ========== Interim 清理策略（帶最小顯示時間保護）==========
+          const currentTime = Date.now();
+
+          // 1. 按句子數清理（確保最舊的句子已經顯示夠久）
           while (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
-            displayBuffer.shift();
+            const oldest = displayBuffer[0];
+            const displayDuration = currentTime - oldest.timestamp;
+            const minTime = oldest.source === 'final' ? MIN_DISPLAY_TIME : MIN_INTERIM_DISPLAY_TIME;
+
+            if (displayDuration >= minTime) {
+              const removed = displayBuffer.shift();
+              console.log('[Content] Interim 清理（超過句數，已顯示', Math.round(displayDuration / 1000), '秒）:', removed.text.substring(0, 20) + '...');
+            } else {
+              console.log('[Content] ⏳ Interim 清理暫停（最舊句子僅顯示', Math.round(displayDuration / 1000), '秒）');
+              break;
+            }
           }
 
+          // 2. 按總字符數清理（確保顯示時間夠久）
           let totalChars = displayBuffer.reduce((sum, item) => sum + item.text.length, 0);
+          console.log('[Content] Interim 清理：當前總字符數:', totalChars);
+
           while (totalChars > MAX_TOTAL_CHARS && displayBuffer.length > 1) {
-            const removed = displayBuffer.shift();
-            totalChars -= removed.text.length;
-            console.log('[Content] Interim 清理（字符限制）:', removed.text.substring(0, 20) + '...');
+            const oldest = displayBuffer[0];
+            const displayDuration = currentTime - oldest.timestamp;
+            const minTime = oldest.source === 'final' ? MIN_DISPLAY_TIME : MIN_INTERIM_DISPLAY_TIME;
+
+            if (displayDuration >= minTime) {
+              const removed = displayBuffer.shift();
+              totalChars -= removed.text.length;
+              console.log('[Content] Interim 清理（超過字符，已顯示', Math.round(displayDuration / 1000), '秒）:', removed.text.substring(0, 20) + '...', '剩餘:', totalChars, '字');
+            } else {
+              console.log('[Content] ⏳ Interim 清理暫停（最舊句子僅顯示', Math.round(displayDuration / 1000), '秒）');
+              break;
+            }
           }
         }
 
