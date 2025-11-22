@@ -22,28 +22,28 @@
 
 ## 💡 核心設計理念
 
-### 🎯 最新架構（2025-11-22）
+### 🎯 最新架構（2025-11-22 v4 - Interim 主導模式）
 
 ```
 字幕顯示架構：
 ┌─────────────────────────────┐
-│ displayBuffer (只存 Final)   │
-│   ├─ Final 句子 1 (淡化)     │
-│   ├─ Final 句子 2 (淡化)     │
-│   └─ Final 句子 3 (最新)     │
-├─────────────────────────────┤
-│ interimSubtitle (臨時變量)   │
-│   └─ Interim 臨時文字...     │
+│ displayBuffer (混合存儲)     │
+│   ├─ Final 句子 1 (已校正)   │
+│   ├─ Final 句子 2 (已校正)   │
+│   └─ Interim 句子 3 (即時)   │ ← 主要字幕來源
 └─────────────────────────────┘
      ↓
-總字數 = Buffer 字數 + Interim 字數 ≤ 50
+Interim 立即顯示（0 延遲）
+Final 靜默校正（背景更新）
+總字數 ≤ 50 字
 ```
 
-**關鍵原則**：
-1. ✅ **Buffer 只存 Final**：最準確的內容
-2. ✅ **Interim 只臨時顯示**：不污染 Buffer
-3. ✅ **共享 50 字額度**：動態分配，版面乾淨
+**關鍵原則（Interim 主導）**：
+1. ✅ **Interim 主導**：立即加入 displayBuffer，幾乎 0 延遲
+2. ✅ **Final 靜默校正**：找到對應的 interim 並靜默更新為 final
+3. ✅ **字數限制**：Interim 和 Final 都要檢查字數限制（最多 50 字）
 4. ✅ **定時自動清理**：每 1 秒清理，不依賴 Final
+5. ✅ **單一 Interim 規則**：Buffer 中最多只有 1 個 interim（同一句話不斷更新）
 
 ---
 
@@ -52,23 +52,28 @@
 | 特性 | **Final 結果** | **Interim 結果** |
 |-----|--------------|----------------|
 | **觸發條件** | `isFinal === true` | `isFinal === false` |
-| **存儲位置** | `displayBuffer` 陣列 | `interimSubtitle` 變量 |
-| **是否加入 Buffer** | ✅ 是 | ❌ 否 |
-| **重複檢測** | ✅ 複雜（累積文字檢測） | ❌ 無 |
-| **智能斷句** | ✅ `smartSplit()` | ❌ 無（直接顯示） |
-| **來源標記** | `source: 'final'` | 不加入 Buffer，無標記 |
-| **最小顯示時間** | 1.5 秒 | 無（被下一個 Interim 覆蓋） |
-| **清理舊 interim** | ✅ 清理年齡 > 5 秒的 interim | N/A（不在 Buffer 中） |
+| **角色定位** | 靜默校正（背景工作） | 主要字幕來源（即時顯示） |
+| **延遲** | 7-12 秒 | ~0 秒 |
+| **存儲位置** | `displayBuffer` 陣列 | `displayBuffer` 陣列 |
+| **是否加入 Buffer** | ✅ 是（校正現有 interim） | ✅ 是（立即加入） |
+| **來源標記** | `source: 'final'` | `source: 'interim'` |
+| **處理邏輯** | 找到對應 interim 靜默更新 | 檢測更新或新增句子 |
+| **字數限制檢查** | ✅ 必須檢查（避免 170+ 字） | ✅ 必須檢查（避免 170+ 字） |
+| **清理舊 interim** | ❌ 不清理（只負責校正） | ✅ 新增前清理所有舊 interim |
+| **單一 Interim 規則** | N/A | ✅ Buffer 中最多只有 1 個 interim |
+| **相似度計算** | ✅ 計算與 interim 的相似度 | ❌ 無 |
 | **加入歷史記錄** | ✅ 保存到 `subtitleHistory` | ❌ 不保存 |
-| **顯示長度限制** | 每句最多 15 字，總共 50 字 | 動態分配（最多 35 字） |
-| **清除時機** | 定時清理（每 1 秒） | 被覆蓋或 Final 清空 |
+| **最小顯示時間** | 1.5 秒（定時清理保護） | 無（被下一個 Interim 覆蓋） |
+| **清除時機** | 定時清理（每 1 秒） | 新 interim 到來時清理舊的 |
 
 ---
 
-## 🎯 Final 結果處理流程
+## 🎯 Final 結果處理流程（靜默校正模式）
 
-**位置**: `content.js:395-527`
+**位置**: `content.js:489-562`
 **觸發**: `displaySubtitle(text, isFinal=true)`
+
+**核心理念**: Final 不再加入新句子，而是**找到對應的 interim 並靜默更新為 final**
 
 ### 處理步驟
 
@@ -78,38 +83,38 @@ Final 結果到來
 ├─ 步驟 1: 重複檢測
 │  ├─ 檢查是否和上次 final 完全相同
 │  │  └─ 相同 → ❌ 跳過處理
-│  │
-│  ├─ 檢測累積文字（includes 關係）
-│  │  ├─ 新文字較短或相同 → ❌ 跳過
-│  │  └─ 新文字較長 → ✅ 提取新增部分
-│  │
 │  └─ 更新 lastFinalTranscript
 │
-├─ 步驟 2: 清理過舊的 interim
-│  ├─ filter() 保留所有 final
-│  └─ filter() 只保留年齡 < 5 秒的 interim
-│     └─ 清理年齡 >= 5 秒的 interim
+├─ 步驟 2: 尋找對應的 Interim 項目
+│  └─ 從後往前搜尋 displayBuffer
+│     ├─ 找到 source === 'interim' 的項目
+│     └─ targetIndex = 該項目的索引
 │
-├─ 步驟 3: 智能斷句
-│  └─ smartSplit(normalized) → 分割成多個句子
+├─ 步驟 3: 如果找到對應的 Interim
+│  │
+│  ├─ 3.1: 計算相似度
+│  │  └─ similarity = calculateSimilarity(interimText, finalText)
+│  │
+│  ├─ 3.2: 字數限制檢查 ⚠️ 重要！
+│  │  ├─ 計算其他項目字數（排除被校正項目）
+│  │  ├─ maxAllowed = 50 - otherItemsChars
+│  │  └─ 如果 finalText 超長 → 截斷保留最後的字
+│  │
+│  ├─ 3.3: 靜默更新（不重新顯示）
+│  │  └─ displayBuffer[targetIndex] = {
+│  │       text: finalText,
+│  │       timestamp: interimItem.timestamp, ← 保留原時間戳
+│  │       source: 'final',
+│  │       corrected: similarity < 0.9
+│  │     }
+│  │
+│  └─ 3.4: 更新顯示
+│     └─ updateSubtitleDisplay()
 │
-├─ 步驟 4: 去重過濾
-│  ├─ 完全匹配檢查（exact match）
-│  └─ 高度重疊檢測（長度差距 <= 3）
+├─ 步驟 4: 保存到歷史記錄
+│  └─ subtitleHistory.push({ text, timestamp, language })
 │
-├─ 步驟 5: 加入 Buffer
-│  └─ 每個新句子:
-│     ├─ displayBuffer.push({ text, timestamp, source: 'final' })
-│     └─ subtitleHistory.push({ text, timestamp, language })
-│
-├─ 步驟 6: 調用清理函數
-│  └─ cleanupBuffer() 清理過期句子
-│
-├─ 步驟 7: 清空 Interim
-│  └─ interimSubtitle = '' （Final 出現，清空臨時文字）
-│
-└─ 步驟 8: 更新顯示
-   └─ updateSubtitleDisplay()
+└─ 完成（不調用 cleanupBuffer，由定時器負責）
 ```
 
 ### 關鍵代碼片段
@@ -117,116 +122,158 @@ Final 結果到來
 ```javascript
 if (isFinal) {
   // 1. 重複檢測
-  if (normalized === lastFinalTranscript) {
-    return; // 跳過相同結果
+  const normalized = normalizeText(text);
+  if (normalized === lastFinalTranscript) return;
+  lastFinalTranscript = normalized;
+
+  // 2. 找到對應的 interim
+  let targetIndex = -1;
+  for (let i = displayBuffer.length - 1; i >= 0; i--) {
+    if (displayBuffer[i].source === 'interim') {
+      targetIndex = i;
+      break;
+    }
   }
 
-  // 2. 累積文字檢測
-  if (lastFinalTranscript && normalized.includes(lastFinalTranscript)) {
-    // 提取新增部分...
+  if (targetIndex >= 0) {
+    const interimItem = displayBuffer[targetIndex];
+    const similarity = calculateSimilarity(interimItem.text, normalized);
+
+    // 3. 字數限制檢查（避免 170+ 字 bug）
+    const otherItemsChars = displayBuffer
+      .filter((_, i) => i !== targetIndex)
+      .reduce((sum, item) => sum + item.text.length, 0);
+    const maxAllowed = MAX_TOTAL_CHARS - otherItemsChars;
+
+    let finalText = normalized;
+    if (normalized.length > maxAllowed) {
+      finalText = normalized.slice(-maxAllowed);
+    }
+
+    // 4. 靜默更新
+    displayBuffer[targetIndex] = {
+      text: finalText,
+      timestamp: interimItem.timestamp, // 保留原時間戳
+      source: 'final',
+      corrected: similarity < 0.9
+    };
+    updateSubtitleDisplay();
   }
 
-  // 3. 清理過舊的 interim (年齡 > 5 秒)
-  displayBuffer = displayBuffer.filter(item => {
-    if (item.source === 'final') return true;
-    const age = Date.now() - item.timestamp;
-    return age < 5000;
-  });
-
-  // 4. 智能斷句
-  const sentences = smartSplit(normalized);
-
-  // 5. 去重過濾
-  const newSentences = sentences.filter(sentence => {
-    // 檢查重複...
-  });
-
-  // 6. 加入 Buffer
-  newSentences.forEach(sentence => {
-    displayBuffer.push({
-      text: sentence,
-      timestamp: Date.now(),
-      source: 'final'
-    });
-    subtitleHistory.push({ text: sentence, ... });
-  });
-
-  // 7. 調用清理函數
-  cleanupBuffer();
-
-  // 8. 清空 Interim
-  interimSubtitle = '';
-
-  // 9. 更新顯示
-  updateSubtitleDisplay();
+  // 5. 保存到歷史
+  subtitleHistory.push({ text: normalized, timestamp: Date.now(), language });
 }
 ```
 
 ---
 
-## ⚡ Interim 結果處理流程
+## ⚡ Interim 結果處理流程（主要字幕來源）
 
-**位置**: `content.js:563-601`
+**位置**: `content.js:564-610`
 **觸發**: `displaySubtitle(text, isFinal=false)`
 
-### 處理步驟（簡化版）
+**核心理念**: Interim 立即加入 displayBuffer，成為**主要字幕來源**（幾乎 0 延遲）
+
+### 處理步驟
 
 ```
 Interim 結果到來
 │
-├─ 步驟 1: 計算 Buffer 總字數
-│  └─ bufferTotalChars = Σ(displayBuffer[i].text.length)
+├─ 步驟 1: 檢測是否更新現有句子
+│  ├─ 檢查最後一項是否為 interim
+│  ├─ 判斷新文字是否包含舊文字（同一句話在變化）
+│  └─ shouldUpdate = true/false
 │
-├─ 步驟 2: 計算剩餘額度
-│  └─ remainingQuota = 50 - bufferTotalChars
+├─ 情況 A: 更新現有 Interim（shouldUpdate === true）
+│  │
+│  ├─ 1.1: 字數限制檢查 ⚠️ 重要！
+│  │  ├─ 計算其他項目字數（不含最後一項）
+│  │  ├─ maxAllowed = 50 - otherItemsChars
+│  │  └─ 如果超長 → 截斷保留最後的字
+│  │
+│  └─ 1.2: 更新最後一項
+│     └─ displayBuffer[last] = {
+│          text: finalText,
+│          timestamp: Date.now(),
+│          source: 'interim'
+│        }
 │
-├─ 步驟 3: 確定 Interim 可顯示字數
-│  └─ interimMaxChars = max(0, min(remainingQuota, 35))
-│
-├─ 步驟 4: 截取 Interim 文字
-│  ├─ 如果 interimMaxChars > 0:
-│  │  ├─ text.length <= interimMaxChars → 完整顯示
-│  │  └─ text.length > interimMaxChars → 顯示 "...（最後 N 字）"
-│  └─ 如果 interimMaxChars = 0:
-│     └─ displayText = '' （Buffer 已滿，不顯示）
-│
-└─ 步驟 5: 更新臨時顯示（不加入 Buffer）
-   ├─ interimSubtitle = displayText
-   └─ updateSubtitleDisplay(displayText)
+└─ 情況 B: 新增 Interim 句子（shouldUpdate === false）
+   │
+   ├─ 2.1: 清理舊 Interim ⚠️ 重要！
+   │  ├─ 確保 Buffer 中最多只有 1 個 interim
+   │  └─ displayBuffer.filter(item => item.source === 'final')
+   │
+   ├─ 2.2: 檢查是否需要清理（分層清理）
+   │  └─ 如果總字數 + 新字數 > 50
+   │     └─ cleanupBeforeAdd([normalized])
+   │
+   └─ 2.3: 加入 Buffer
+      └─ displayBuffer.push({
+           text: normalized,
+           timestamp: Date.now(),
+           source: 'interim'
+         })
 ```
 
 ### 關鍵代碼片段
 
 ```javascript
 else { // isFinal === false
-  // 1. 計算 Buffer (Final) 的總字數
-  const bufferTotalChars = displayBuffer.reduce((sum, item) =>
-    sum + item.text.length, 0
-  );
+  const normalized = normalizeText(text);
 
-  // 2. 計算剩餘額度
-  const remainingQuota = MAX_TOTAL_CHARS - bufferTotalChars; // 50 - Buffer
-
-  // 3. Interim 可顯示字數 = min(剩餘額度, 35)
-  const MAX_INTERIM_DISPLAY_CHARS = 35;
-  const interimMaxChars = Math.max(0, Math.min(remainingQuota, MAX_INTERIM_DISPLAY_CHARS));
-
-  // 4. 根據可用額度截取 Interim 文字
-  let displayText = '';
-  if (interimMaxChars > 0) {
-    if (text.length > interimMaxChars) {
-      displayText = '...' + text.slice(-interimMaxChars);
-    } else {
-      displayText = text;
+  // 1. 檢測是否更新現有句子
+  let shouldUpdate = false;
+  if (displayBuffer.length > 0) {
+    const lastItem = displayBuffer[displayBuffer.length - 1];
+    if (lastItem.source === 'interim') {
+      if (normalized.includes(lastItem.text) || lastItem.text.includes(normalized)) {
+        shouldUpdate = true;
+      }
     }
-  } else {
-    // Buffer 已滿額，Interim 無法顯示
-    displayText = '';
   }
 
-  // 5. 直接顯示在臨時區域，不加入 displayBuffer
-  interimSubtitle = displayText;
-  updateSubtitleDisplay(displayText);
+  if (shouldUpdate) {
+    // 情況 A: 更新現有 interim
+    // 字數限制檢查（避免 170+ 字 bug）
+    const otherItemsChars = displayBuffer
+      .slice(0, -1)
+      .reduce((sum, item) => sum + item.text.length, 0);
+    const maxAllowed = MAX_TOTAL_CHARS - otherItemsChars;
+
+    let finalText = normalized;
+    if (normalized.length > maxAllowed) {
+      finalText = normalized.slice(-maxAllowed);
+    }
+
+    displayBuffer[displayBuffer.length - 1] = {
+      text: finalText,
+      timestamp: Date.now(),
+      source: 'interim'
+    };
+  } else {
+    // 情況 B: 新增 interim 句子
+    // 清理舊 interim（確保最多只有 1 個）
+    const oldInterimCount = displayBuffer.filter(item => item.source === 'interim').length;
+    if (oldInterimCount > 0) {
+      displayBuffer = displayBuffer.filter(item => item.source === 'final');
+    }
+
+    // 檢查是否需要清理
+    const totalChars = displayBuffer.reduce((sum, item) => sum + item.text.length, 0);
+    if (totalChars + normalized.length > MAX_TOTAL_CHARS) {
+      cleanupBeforeAdd([normalized]);
+    }
+
+    // 加入 Buffer
+    displayBuffer.push({
+      text: normalized,
+      timestamp: Date.now(),
+      source: 'interim'
+    });
+  }
+
+  updateSubtitleDisplay();
 }
 ```
 
@@ -429,8 +476,61 @@ const STALE_INTERIM_THRESHOLD = 5000; // 清理過舊 interim 的閾值 5 秒
 
 ## 📈 版本演進歷史
 
-### 版本 3 (2025-11-22 最新)
-**重大改進：定時清理 + 字數共享**
+### 版本 5 (2025-11-22 最新)
+**心跳超時優化**
+
+✅ **改進**：
+- HEARTBEAT_TIMEOUT: 3 秒 → 6 秒
+- 給予 Web Speech API 更多處理緩衝時間
+- 減少誤判導致的不必要重啟
+
+✅ **效果**：
+- 重啟頻率從 ~50 秒一次降低到預期 >100 秒一次
+- 提升整體穩定性
+
+📝 **相關提交**: `ca9a07b` - perf: 放寬心跳超時到 6 秒以減少誤判重啟
+
+---
+
+### 版本 4 (2025-11-22)
+**Interim 主導模式重大重構** 🎯
+
+✅ **核心變更**：
+- **Interim 成為主要字幕來源**：立即加入 displayBuffer（~0 秒延遲）
+- **Final 改為靜默校正**：找到對應 interim 並背景更新（不影響顯示）
+- **單一 Interim 規則**：Buffer 中最多只有 1 個 interim
+- **字數限制強化**：Interim 和 Final 都要檢查字數限制
+
+✅ **新增功能**：
+- `calculateSimilarity()` 函數：計算 interim 和 final 的相似度
+- 清理舊 interim：新增 interim 前先清理所有舊的
+- 分層清理：`cleanupBeforeAdd()` 三層漸進式清理邏輯
+
+✅ **Bug 修復**：
+- 修復字數限制失效（170+ 字 bug）
+- 修復日誌負數顯示（雙重減法）
+- 修復多個 interim 累積（343 字 bug）
+
+✅ **監控功能**：
+- 添加存活計時器監控重啟頻率
+- 詳細的心跳檢查日誌
+- 會話統計（時長、重啟次數、平均間隔）
+
+✅ **效果**：
+- 延遲從 7-12 秒降低到 ~0 秒
+- 總字數嚴格控制在 50 字以內
+- 即時性大幅提升，準確性不受影響
+
+📝 **相關提交**:
+- `81d86d0` - feat: 改為 Interim 主導解決 Final 延遲問題
+- `a4ad0fe` - fix: 修復字數限制失效和重複顯示問題
+- `5aaef33` - fix: 修復日誌負數顯示和多 Interim 累積問題
+- `782e3ef` - feat: 添加存活計時器監控心跳檢測重啟
+
+---
+
+### 版本 3 (2025-11-22)
+**定時清理 + 字數共享**
 
 ✅ **新增功能**：
 - 定時清理器（每 1 秒自動清理 Buffer）
@@ -445,7 +545,10 @@ const STALE_INTERIM_THRESHOLD = 5000; // 清理過舊 interim 的閾值 5 秒
 - 句子最多顯示 2.5 秒（1.5s + 1s 延遲）
 - Buffer 不會累積超過 3-4 項
 - 總字數嚴格控制在 50 字以內
-- 版面更乾淨、更穩定
+
+❌ **問題**：
+- Final 延遲太久（7-12 秒），字幕落後影片
+- 導致 v4 重構為 Interim 主導模式
 
 ---
 
@@ -520,4 +623,4 @@ const MIN_DISPLAY_TIME = 2000; // 從 1500ms 改為 2000ms
 
 **最後更新**: 2025-11-22
 **維護者**: Claude (AI Assistant)
-**當前版本**: v3 (定時清理 + 字數共享)
+**當前版本**: v5 (Interim 主導 + 心跳優化)
