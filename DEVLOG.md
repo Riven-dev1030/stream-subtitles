@@ -63,14 +63,15 @@ while (totalChars > MAX_TOTAL_CHARS && displayBuffer.length > 1) {
 
 #### 4. 心跳檢測機制（持續調整中）
 ```javascript
-const HEARTBEAT_INTERVAL = 2000; // 2秒檢測一次
-const HEARTBEAT_TIMEOUT = 5000;  // 5秒無結果就重啟
+const HEARTBEAT_INTERVAL = 1000; // 1秒檢測一次
+const HEARTBEAT_TIMEOUT = 3000;  // 3秒無結果就重啟
 ```
 
 **調整歷史：**
-- 初版：5秒檢測一次，10秒超時
-- 當前版本：2秒檢測一次，5秒超時
-- 用戶反饋：**問題仍然存在**
+- v1：5秒檢測一次，10秒超時
+- v2：2秒檢測一次，5秒超時
+- v3（當前）：**1秒檢測一次，3秒超時**
+- 用戶反饋：**問題仍然存在，持續測試中**
 
 ### ⚠️ 當前狀態
 
