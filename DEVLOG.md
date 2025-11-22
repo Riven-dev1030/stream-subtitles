@@ -274,6 +274,263 @@ const MIN_INTERIM_DISPLAY_TIME = 2000; // Interim: 2秒（更快清除）
 
 ---
 
+## 2025-11-22 - 定時清理機制 + 字數額度共享
+
+### 🐛 發現的新問題
+
+#### 問題 1：Interim 快速累積導致 Buffer 爆滿
+
+**症狀**：
+- Console 顯示 `Buffer 最終狀態: 10 項`（應該最多 3 項）
+- Interim 每 0.1 秒就加入一個新項目到 Buffer
+- 內容快速累積，無法控制
+
+**日誌證據**：
+```
+Interim 過長 ( 72 字)，自動斷句
+Interim 過長 ( 73 字)，自動斷句
+Interim 過長 ( 74 字)，自動斷句
+...
+Buffer 最終狀態: 10 項  ← 異常！
+```
+
+**根本原因**：
+1. Interim 每次都會變化（72→73→74 字），內容不斷累積
+2. 去重檢查只有「完全匹配」，無法防止相似句子
+3. Interim 每 0.1 秒觸發，但需要 2 秒才能清理 → 累積速度 > 清理速度
+
+---
+
+#### 問題 2：清理邏輯只在 Final 時觸發
+
+**症狀**：
+- 句子顯示了 32 秒才被清理（應該 3 秒）
+- Buffer 累積到 10 項才開始清理
+
+**日誌證據**：
+```
+移除舊句子（已顯示 32 秒）× 5 次
+❌ 最舊句子還不能移除（僅顯示 0 秒）
+Buffer 最終狀態: 10 項
+```
+
+**根本原因**：
+- 清理邏輯寫在 `if (isFinal)` 區塊內
+- 如果長時間沒有 Final 結果 → 不清理
+- 句子可能累積 30+ 秒才被清理
+
+**時間軸分析**：
+```
+0秒  → Final 結果，加入 3 句
+5秒  → Interim...（無 Final，不清理）
+10秒 → Interim...（無 Final，不清理）
+15秒 → Interim...（無 Final，不清理）
+...
+32秒 → Final 結果 → 才發現 Buffer 有 10 項！
+```
+
+---
+
+### 🔧 解決方案
+
+#### 方案 1：Interim 完全不加入 Buffer（重構）
+
+**設計理念**：
+- Buffer = Final 專用（最準確的內容）
+- Interim = 臨時預覽（不污染 Buffer）
+
+**實現** (commit: c9fb4ac):
+```javascript
+// 移除 75 行複雜的 Interim 斷句和清理邏輯
+// 新增 4 行簡潔邏輯
+else { // isFinal === false
+  console.log('[Content] Interim 結果');
+
+  // 直接顯示在臨時區域，不加入 displayBuffer
+  interimSubtitle = text;
+  lastTranscript = text;
+  updateSubtitleDisplay(text);
+}
+```
+
+**效果**：
+- ✅ Interim 不再累積到 Buffer
+- ✅ 邏輯更清晰（Buffer 只有 Final）
+- ✅ 避免 Interim 快速累積問題
+
+---
+
+#### 方案 2：定時清理器（核心改進）
+
+**問題分析**：
+- 舊機制：只在 Final 時清理 → 可能 30+ 秒才清理
+- 新機制：每 1 秒自動檢查 → 最多 2.5 秒就清理
+
+**實現** (commit: d364624):
+
+1. **創建獨立的清理函數** (content.js:350-392)
+```javascript
+function cleanupBuffer() {
+  if (displayBuffer.length === 0) return;
+
+  const currentTime = Date.now();
+  let cleaned = false;
+
+  // 1. 按句子數清理
+  while (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
+    const oldest = displayBuffer[0];
+    const displayDuration = currentTime - oldest.timestamp;
+
+    if (displayDuration >= MIN_DISPLAY_TIME) { // 1500ms
+      displayBuffer.shift();
+      cleaned = true;
+    } else {
+      break; // 顯示時間不夠，暫停清理
+    }
+  }
+
+  // 2. 按總字符數清理
+  let totalChars = displayBuffer.reduce((sum, item) => sum + item.text.length, 0);
+  while (totalChars > MAX_TOTAL_CHARS && displayBuffer.length > 1) {
+    const oldest = displayBuffer[0];
+    const displayDuration = currentTime - oldest.timestamp;
+
+    if (displayDuration >= MIN_DISPLAY_TIME) {
+      displayBuffer.shift();
+      totalChars -= removed.text.length;
+      cleaned = true;
+    } else {
+      break;
+    }
+  }
+
+  // 如果清理了內容，更新顯示
+  if (cleaned) {
+    updateSubtitleDisplay(interimSubtitle);
+  }
+}
+```
+
+2. **啟動定時清理器** (content.js:102-105)
+```javascript
+// 在 init() 函數中
+setInterval(() => {
+  cleanupBuffer();
+}, 1000);
+console.log('[Content] ✅ 定時清理器已啟動（每 1 秒檢查一次）');
+```
+
+3. **Final 處理時調用清理**
+```javascript
+// Final 處理邏輯簡化
+cleanupBuffer(); // 調用統一的清理函數
+```
+
+**效果**：
+- ✅ 句子最多顯示 1.5 秒 + 1 秒延遲 = **2.5 秒**
+- ✅ Buffer 不會累積超過 3-4 項
+- ✅ 不依賴 Final 結果，完全獨立運作
+
+---
+
+#### 方案 3：Final + Interim 共享 50 字額度（優化）
+
+**設計目標**：
+- 總字數嚴格控制在 50 字以內
+- 版面更乾淨、更穩定
+- 動態分配 Interim 可用額度
+
+**實現** (commit: e092cac):
+
+```javascript
+// Interim 處理邏輯
+else { // isFinal === false
+  // 1. 計算 Buffer (Final) 的總字數
+  const bufferTotalChars = displayBuffer.reduce((sum, item) =>
+    sum + item.text.length, 0
+  );
+
+  // 2. 計算剩餘額度
+  const remainingQuota = MAX_TOTAL_CHARS - bufferTotalChars; // 50 - Buffer
+
+  // 3. Interim 可顯示字數 = min(剩餘額度, 35)
+  const MAX_INTERIM_DISPLAY_CHARS = 35;
+  const interimMaxChars = Math.max(0, Math.min(remainingQuota, MAX_INTERIM_DISPLAY_CHARS));
+
+  // 4. 根據可用額度截取 Interim 文字
+  let displayText = '';
+  if (interimMaxChars > 0) {
+    if (text.length > interimMaxChars) {
+      displayText = '...' + text.slice(-interimMaxChars);
+    } else {
+      displayText = text;
+    }
+  } else {
+    // Buffer 已滿額，Interim 無法顯示
+    displayText = '';
+  }
+
+  // 5. 直接顯示在臨時區域
+  interimSubtitle = displayText;
+  updateSubtitleDisplay(displayText);
+}
+```
+
+**動態分配示例**：
+
+| Buffer 字數 | 剩餘額度 | Interim 可顯示 | 總字數 |
+|-----------|---------|--------------|-------|
+| 10 字 | 40 字 | 35 字 | 45 字 |
+| 20 字 | 30 字 | 30 字 | 50 字 |
+| 40 字 | 10 字 | 10 字 | 50 字 |
+| 50 字 | 0 字 | 0 字 | 50 字 |
+
+**效果**：
+- ✅ 總字數嚴格 ≤ 50 字
+- ✅ Buffer 多時 Interim 少，Buffer 少時 Interim 多
+- ✅ 版面乾淨、穩定
+
+---
+
+### 📊 參數調整
+
+```javascript
+// 時間參數
+const MIN_DISPLAY_TIME = 1500;        // 3秒 → 1.5秒
+const HEARTBEAT_TIMEOUT = 3000;       // 5秒 → 3秒
+
+// 字數限制
+const MAX_TOTAL_CHARS = 50;           // Final + Interim 共享
+const MAX_INTERIM_DISPLAY_CHARS = 35; // Interim 最多 35 字
+```
+
+---
+
+### ✅ 改進效果對比
+
+| 項目 | 舊版本（v1-v2） | 新版本 v3 |
+|-----|--------------|----------|
+| **句子顯示時間** | 可能 30+ 秒 | 最多 2.5 秒 |
+| **Buffer 累積** | 可能 10+ 項 | 最多 3-4 項 |
+| **總字數控制** | 無限制 | 嚴格 ≤ 50 字 |
+| **Interim 處理** | 加入 Buffer，累積 | 臨時顯示，不累積 |
+| **清理機制** | 只在 Final 時 | 每 1 秒自動清理 |
+| **清理依賴性** | 依賴 Final 結果 | 完全獨立 |
+| **版面穩定性** | 混亂、不穩定 | 乾淨、穩定 |
+
+---
+
+### 📝 相關文檔
+
+- **詳細邏輯說明**: `docs/SUBTITLE_PROCESSING_LOGIC.md` (v3)
+- **Commits**:
+  - `c9fb4ac`: Interim 不再加入 Buffer
+  - `d364624`: 加入定時清理器
+  - `e092cac`: Final + Interim 共享額度
+  - `355a336`: 更新文檔至 v3
+
+---
+
 ## 待辦事項
 
 - [ ] 深入調查字幕卡住的根本原因
@@ -281,9 +538,13 @@ const MIN_INTERIM_DISPLAY_TIME = 2000; // Interim: 2秒（更快清除）
 - [ ] 研究 Chrome 和 Edge 的 Speech Recognition 行為差異
 - [ ] 測試在不同網站和環境下的穩定性
 - [x] 修復混亂的清除邏輯
-- [x] 確保字幕至少顯示 3 秒
+- [x] 確保字幕至少顯示 3 秒（已調整為 1.5 秒）
 - [x] 移除 interim 顯示，簡化邏輯
+- [x] 解決 Buffer 累積過多問題（定時清理器）
+- [x] 解決句子顯示時間過長問題（30+ 秒 → 2.5 秒）
+- [x] 實現 Final + Interim 字數額度共享（總字數 ≤ 50）
+- [x] 優化 Interim 處理邏輯（不加入 Buffer）
 
 ---
 
-*最後更新: 2025-11-21*
+*最後更新: 2025-11-22*
