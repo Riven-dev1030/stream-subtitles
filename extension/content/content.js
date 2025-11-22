@@ -518,83 +518,12 @@ function displaySubtitle(text, isFinal) {
 
   } else {
     // ========== Interim 結果處理 ==========
+    // 策略：Interim 完全不加入 Buffer，只在臨時區域顯示
+    // 這樣 Buffer 只保留準確的 Final 句子，避免累積和混亂
 
-    // 如果臨時文字太長，自動創建新句（標記為 interim）
-    if (text.length > MAX_CHARS_PER_LINE) {
-      console.log('[Content] Interim 過長 (', text.length, '字)，自動斷句');
+    console.log('[Content] Interim 結果 (', text.length, '字):', text.substring(0, 30) + '...');
 
-      // 找到適合的斷句點
-      const splitPoint = findSplitPoint(text, MAX_CHARS_PER_LINE);
-
-      if (splitPoint > 0) {
-        // 前半部分作為完整句子（interim 來源）
-        const completedPart = normalizeText(text.slice(0, splitPoint));
-
-        // 檢查是否已存在（檢查所有來源）
-        const exists = displayBuffer.some(item => item.text === completedPart);
-
-        if (!exists && completedPart) {
-          displayBuffer.push({
-            text: completedPart,
-            timestamp: Date.now(),
-            source: 'interim'  // 標記為臨時來源
-          });
-
-          console.log('[Content] ✅ Interim 斷句:', completedPart.substring(0, 30) + '...');
-
-          // ========== Interim 清理策略（帶最小顯示時間保護）==========
-          const currentTime = Date.now();
-
-          // 1. 按句子數清理（確保最舊的句子已經顯示夠久）
-          while (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
-            const oldest = displayBuffer[0];
-            const displayDuration = currentTime - oldest.timestamp;
-            const minTime = oldest.source === 'final' ? MIN_DISPLAY_TIME : MIN_INTERIM_DISPLAY_TIME;
-
-            if (displayDuration >= minTime) {
-              const removed = displayBuffer.shift();
-              console.log('[Content] Interim 清理（超過句數，已顯示', Math.round(displayDuration / 1000), '秒）:', removed.text.substring(0, 20) + '...');
-            } else {
-              console.log('[Content] ⏳ Interim 清理暫停（最舊句子僅顯示', Math.round(displayDuration / 1000), '秒）');
-              break;
-            }
-          }
-
-          // 2. 按總字符數清理（確保顯示時間夠久）
-          let totalChars = displayBuffer.reduce((sum, item) => sum + item.text.length, 0);
-          console.log('[Content] Interim 清理：當前總字符數:', totalChars);
-
-          while (totalChars > MAX_TOTAL_CHARS && displayBuffer.length > 1) {
-            const oldest = displayBuffer[0];
-            const displayDuration = currentTime - oldest.timestamp;
-            const minTime = oldest.source === 'final' ? MIN_DISPLAY_TIME : MIN_INTERIM_DISPLAY_TIME;
-
-            if (displayDuration >= minTime) {
-              const removed = displayBuffer.shift();
-              totalChars -= removed.text.length;
-              console.log('[Content] Interim 清理（超過字符，已顯示', Math.round(displayDuration / 1000), '秒）:', removed.text.substring(0, 20) + '...', '剩餘:', totalChars, '字');
-            } else {
-              console.log('[Content] ⏳ Interim 清理暫停（最舊句子僅顯示', Math.round(displayDuration / 1000), '秒）');
-              break;
-            }
-          }
-        }
-
-        // 後半部分作為臨時文字顯示
-        const remainingPart = text.slice(splitPoint).trim();
-        interimSubtitle = remainingPart;
-        lastTranscript = text;
-        updateSubtitleDisplay(remainingPart);
-
-        // 自動顯示字幕
-        if (!isVisible) {
-          showSubtitleUI();
-        }
-        return;
-      }
-    }
-
-    // 文字不長或找不到斷點，直接顯示（不加入 buffer）
+    // 直接顯示在臨時區域，不加入 displayBuffer
     interimSubtitle = text;
     lastTranscript = text;
     updateSubtitleDisplay(text);
