@@ -523,10 +523,18 @@ function displaySubtitle(text, isFinal) {
 
     console.log('[Content] Interim 結果 (', text.length, '字):', text.substring(0, 30) + '...');
 
+    // 限制 Interim 顯示長度為 35 字（只顯示最後 35 字）
+    const MAX_INTERIM_DISPLAY_CHARS = 35;
+    let displayText = text;
+    if (text.length > MAX_INTERIM_DISPLAY_CHARS) {
+      displayText = '...' + text.slice(-MAX_INTERIM_DISPLAY_CHARS);
+      console.log('[Content] Interim 過長，截取最後', MAX_INTERIM_DISPLAY_CHARS, '字');
+    }
+
     // 直接顯示在臨時區域，不加入 displayBuffer
-    interimSubtitle = text;
+    interimSubtitle = displayText;
     lastTranscript = text;
-    updateSubtitleDisplay(text);
+    updateSubtitleDisplay(displayText);
   }
 
   // 自動顯示字幕
