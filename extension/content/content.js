@@ -32,6 +32,11 @@ let heartbeatTimer = null; // 心跳檢測計時器
 const HEARTBEAT_INTERVAL = 1000; // 1秒檢測一次
 const HEARTBEAT_TIMEOUT = 3000; // 3秒無結果就重啟
 
+// 存活監控變數
+let sessionStartTime = null; // 會話開始時間
+let restartCount = 0; // 重啟次數
+let lastRestartTime = null; // 上次重啟時間
+
 // 檢查瀏覽器支援
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const isSpeechRecognitionSupported = !!SpeechRecognition;
@@ -174,6 +179,13 @@ function startRecording(language = 'en', autoDetectMode = false) {
     recognition.start();
     console.log('[Content] 語音辨識啟動中...');
 
+    // 初始化會話開始時間（如果是第一次啟動）
+    if (!sessionStartTime) {
+      sessionStartTime = Date.now();
+      restartCount = 0;
+      console.log('[Content] 📊 會話開始，時間:', new Date(sessionStartTime).toLocaleTimeString());
+    }
+
     // 啟動心跳檢測
     startHeartbeat();
 
@@ -184,7 +196,7 @@ function startRecording(language = 'en', autoDetectMode = false) {
 }
 
 // 停止錄音
-function stopRecording() {
+function stopRecording(skipSessionReset = false) {
   console.log('[Content] 停止語音辨識');
 
   if (recognition) {
@@ -198,6 +210,16 @@ function stopRecording() {
 
   isRecording = false;
   stopHeartbeat(); // 停止心跳檢測
+
+  // 重置會話監控變數（除非是重啟時的停止）
+  if (!skipSessionReset && sessionStartTime) {
+    const sessionDuration = Date.now() - sessionStartTime;
+    console.log('[Content] 📊 會話結束，總時長:', Math.round(sessionDuration / 1000), '秒，重啟次數:', restartCount);
+    sessionStartTime = null;
+    restartCount = 0;
+    lastRestartTime = null;
+  }
+
   updateControlPanel();
 }
 
@@ -880,18 +902,34 @@ function startHeartbeat() {
   heartbeatTimer = setInterval(() => {
     const now = Date.now();
     const timeSinceLastResult = now - lastResultTimestamp;
+    const sessionDuration = sessionStartTime ? Math.round((now - sessionStartTime) / 1000) : 0;
+    const timeSinceLastRestart = lastRestartTime ? Math.round((now - lastRestartTime) / 1000) : 0;
 
-    console.log('[Content] ⏱️ 心跳檢查：距離上次結果', Math.round(timeSinceLastResult / 1000), '秒');
+    // 顯示詳細的心跳資訊
+    console.log(
+      `[Content] ⏱️ 心跳檢查：` +
+      `距上次結果 ${Math.round(timeSinceLastResult / 1000)}秒 | ` +
+      `會話時長 ${sessionDuration}秒 | ` +
+      `重啟次數 ${restartCount}次` +
+      (lastRestartTime ? ` | 距上次重啟 ${timeSinceLastRestart}秒` : '')
+    );
 
     // 如果超過指定時間沒有收到任何結果（包括 interim），可能卡住了
     if (timeSinceLastResult > HEARTBEAT_TIMEOUT && isRecording) {
-      console.warn('[Content] ⚠️ 偵測到可能卡住（' + (HEARTBEAT_TIMEOUT/1000) + '秒無結果），嘗試重啟...');
-      showToast('⚠️ 偵測到異常，正在重啟語音辨識...');
+      restartCount++;
+      lastRestartTime = now;
+
+      console.warn(
+        `[Content] ⚠️ 偵測到可能卡住（${HEARTBEAT_TIMEOUT/1000}秒無結果），第 ${restartCount} 次重啟...` +
+        `\n📊 會話時長：${sessionDuration}秒` +
+        `\n📊 平均重啟間隔：${Math.round(sessionDuration / restartCount)}秒`
+      );
+      showToast(`⚠️ 偵測到異常，正在重啟語音辨識... (第 ${restartCount} 次)`);
 
       // 重啟語音辨識
       const lang = currentLanguage;
       const auto = autoDetect;
-      stopRecording();
+      stopRecording(true); // 傳入 true 以保留會話資訊
       setTimeout(() => {
         startRecording(lang, auto);
       }, 500);
