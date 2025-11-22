@@ -149,6 +149,61 @@ if (existing.includes(sentence) || sentence.includes(existing)) {
 
 ---
 
+### 🎯 2025-11-21 傍晚 - 移除 Interim 顯示，大幅簡化邏輯
+
+#### 用戶洞察
+
+用戶提出關鍵問題：**「還是不要顯示臨時句子，這會增加多少延遲？」**
+
+分析發現：
+- Interim（臨時）延遲：~0 秒，但不斷變化、不準確
+- Final（最終）延遲：~1-2 秒，但準確穩定
+- **結論：1-2 秒延遲對字幕來說完全可接受**
+
+#### 重構決策
+
+**完全移除 interim 顯示，只保留 final 結果**
+
+**刪除的代碼：**
+- 所有 interim 處理邏輯（~100 行）
+- source 標記（'final' vs 'interim'）
+- interim 清理邏輯
+- 臨時字幕相關變數
+
+**簡化後的邏輯：**
+```javascript
+function displaySubtitle(text, isFinal) {
+  if (!isFinal) {
+    return; // 直接跳過所有 interim
+  }
+  // 只處理 final 結果...
+}
+```
+
+**displayBuffer 簡化為：**
+```javascript
+{
+  text: "字幕內容",
+  timestamp: 時間戳
+  // 不再需要 source 欄位
+}
+```
+
+#### 優點
+
+1. **代碼量減少**: 210 行 → 113 行（減少約 46%）
+2. **邏輯清晰**: 不再有 final/interim 混合處理
+3. **沒有閃爍**: 字幕不會不斷變化
+4. **減少 bug**: 移除了大量潛在錯誤來源
+5. **更易維護**: 單一路徑，更容易理解
+
+#### 權衡
+
+- **延遲增加**: 約 1-2 秒
+- **用戶體驗**: 對字幕來說可接受（觀眾習慣字幕延遲）
+
+---
+
 ## 待辦事項
 
 - [ ] 深入調查字幕卡住的根本原因
@@ -157,6 +212,7 @@ if (existing.includes(sentence) || sentence.includes(existing)) {
 - [ ] 測試在不同網站和環境下的穩定性
 - [x] 修復混亂的清除邏輯
 - [x] 確保字幕至少顯示 3 秒
+- [x] 移除 interim 顯示，簡化邏輯
 
 ---
 
