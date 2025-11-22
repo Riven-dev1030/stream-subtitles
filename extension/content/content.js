@@ -406,19 +406,15 @@ function cleanupBeforeAdd(newSentences) {
   let currentChars = displayBuffer.reduce((sum, item) => sum + item.text.length, 0);
   const totalAfterAdd = currentChars + newCharsNeeded;
 
-  console.log('[Content] 🔍 預檢查：當前', currentChars, '字 + 新增', newCharsNeeded, '字 = 總共', totalAfterAdd, '字');
-
   // 如果加入後不會超過限制，不需要清理
   if (totalAfterAdd <= MAX_TOTAL_CHARS) {
-    console.log('[Content] ✅ 字數在限制內，無需清理');
     return;
   }
 
   const needToRemove = totalAfterAdd - MAX_TOTAL_CHARS;
   let removed = 0;
+  let layer = 0; // 記錄使用了哪一層清理
   const now = Date.now();
-
-  console.log('[Content] ⚠️ 需要清理', needToRemove, '字以騰出空間');
 
   // 第1層：優先清理顯示時間 ≥ 1.5秒 的句子
   while (removed < needToRemove && displayBuffer.length > 0) {
@@ -427,47 +423,44 @@ function cleanupBeforeAdd(newSentences) {
 
     if (displayDuration >= MIN_DISPLAY_TIME) {
       removed += oldest.text.length;
-      const removedItem = displayBuffer.shift();
-      currentChars -= removedItem.text.length;
-      console.log('[Content] 🗑️ 第1層清理（≥1.5秒）:', removedItem.text.substring(0, 20) + '...', '(已顯示', Math.round(displayDuration / 1000), '秒)');
+      displayBuffer.shift();
+      currentChars -= oldest.text.length;
+      layer = 1;
     } else {
-      break; // 如果最舊的句子顯示時間不足，停止第1層清理
+      break;
     }
   }
 
   // 第2層：如果還不夠，清理顯示時間 ≥ 0.5秒 的句子
   if (removed < needToRemove) {
-    console.log('[Content] ⚡ 第1層清理不足，啟動第2層（≥0.5秒）');
     while (removed < needToRemove && displayBuffer.length > 0) {
       const oldest = displayBuffer[0];
       const displayDuration = now - oldest.timestamp;
 
       if (displayDuration >= 500) {
         removed += oldest.text.length;
-        const removedItem = displayBuffer.shift();
-        currentChars -= removedItem.text.length;
-        console.log('[Content] 🗑️ 第2層清理（≥0.5秒）:', removedItem.text.substring(0, 20) + '...', '(已顯示', Math.round(displayDuration / 1000), '秒)');
+        displayBuffer.shift();
+        currentChars -= oldest.text.length;
+        layer = 2;
       } else {
-        break; // 如果最舊的句子顯示時間不足，停止第2層清理
+        break;
       }
     }
   }
 
   // 第3層：如果還是不夠，強制清理（無視時間），但至少保留1句
   if (removed < needToRemove) {
-    console.log('[Content] 🚨 第2層清理不足，啟動第3層（強制清理）');
     while (removed < needToRemove && displayBuffer.length > 1) {
-      const oldest = displayBuffer[0];
-      const displayDuration = now - oldest.timestamp;
-      removed += oldest.text.length;
-      const removedItem = displayBuffer.shift();
-      currentChars -= removedItem.text.length;
-      console.log('[Content] 🗑️ 第3層清理（強制）:', removedItem.text.substring(0, 20) + '...', '(僅顯示', Math.round(displayDuration / 1000), '秒)');
+      removed += displayBuffer[0].text.length;
+      displayBuffer.shift();
+      layer = 3;
     }
   }
 
-  const finalChars = displayBuffer.reduce((sum, item) => sum + item.text.length, 0);
-  console.log('[Content] ✅ 清理完成：清理了', removed, '字，剩餘', finalChars, '字，Buffer 剩', displayBuffer.length, '項');
+  // 只在有清理時才輸出日誌（減少 console 輸出）
+  if (layer > 0) {
+    console.log(`[Content] 🗑️ 分層清理(L${layer})：清理 ${removed} 字，剩餘 ${currentChars - removed} 字`);
+  }
 }
 
 // 顯示字幕
@@ -593,9 +586,9 @@ function displaySubtitle(text, isFinal) {
       console.log('[Content] ✅ 新增:', sentence.substring(0, 30) + (sentence.length > 30 ? '...' : ''));
     });
 
-    // ========== Final Buffer 清理策略 ==========
-    // 調用統一的清理函數
-    cleanupBuffer();
+    // 注意：不需要在這裡再次呼叫 cleanupBuffer()
+    // 因為 cleanupBeforeAdd() 已經確保總字數在限制內
+    // 定時器會每秒自動清理，避免重複清理造成效能問題
 
     // 限制歷史記錄長度
     if (subtitleHistory.length > 50) {
