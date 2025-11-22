@@ -397,7 +397,7 @@ const MIN_INTERIM_DISPLAY_TIME = 2000;// 已棄用（Interim 不加入 Buffer）
 
 // 其他時間參數
 const HEARTBEAT_INTERVAL = 1000;      // 心跳檢測間隔 1 秒
-const HEARTBEAT_TIMEOUT = 3000;       // 心跳超時 3 秒
+const HEARTBEAT_TIMEOUT = 6000;       // 心跳超時 6 秒（從3秒放寬以減少誤判）
 const CLEANUP_INTERVAL = 1000;        // 清理檢查間隔 1 秒
 
 // 硬編碼的時間閾值
@@ -409,9 +409,21 @@ const STALE_INTERIM_THRESHOLD = 5000; // 清理過舊 interim 的閾值 5 秒
 | 參數 | 值 | 用途 |
 |-----|---|------|
 | `MIN_DISPLAY_TIME` | 1500ms (1.5秒) | Final 句子的最小顯示時間 |
-| `HEARTBEAT_TIMEOUT` | 3000ms (3秒) | 語音識別卡住超時時間 |
+| `HEARTBEAT_TIMEOUT` | 6000ms (6秒) | 語音識別卡住超時時間 |
 | `CLEANUP_INTERVAL` | 1000ms (1秒) | 定時清理檢查間隔 |
 | `STALE_INTERIM_THRESHOLD` | 5000ms (5秒) | Final 出現時清理 interim 的年齡閾值 |
+
+### 心跳超時調整說明
+
+**調整歷史**：
+- v3: 3000ms (3秒) - 初始設定
+- v5: **6000ms (6秒)** - 當前設定（2025-11-22）
+
+**調整原因**：
+- 用戶測試發現 3 秒超時導致每 50 秒重啟一次
+- Web Speech API 可能有 3-5 秒的正常處理延遲
+- 3 秒設定過於激進，將正常延遲誤判為卡住
+- 調整到 6 秒大幅減少誤判，提升穩定性
 
 ---
 
