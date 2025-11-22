@@ -495,11 +495,21 @@ function displaySubtitle(text, isFinal) {
       const interimItem = displayBuffer[targetIndex];
       const similarity = calculateSimilarity(interimItem.text, normalized);
 
-      console.log('[Content] 📝 校正 Interim:', interimItem.text.substring(0, 20), '→', normalized.substring(0, 20), '相似度:', similarity.toFixed(2));
+      // ⚠️ 重要：Final 也要檢查字數限制
+      const otherItemsChars = displayBuffer.filter((_, i) => i !== targetIndex).reduce((sum, item) => sum + item.text.length, 0);
+      const maxAllowed = MAX_TOTAL_CHARS - otherItemsChars;
+
+      let finalText = normalized;
+      if (normalized.length > maxAllowed) {
+        console.log('[Content] ⚠️ Final 超過字數限制，截斷：', normalized.length, '→', maxAllowed);
+        finalText = normalized.slice(-maxAllowed); // 保留最後的字
+      }
+
+      console.log('[Content] 📝 校正 Interim:', interimItem.text.substring(0, 20), '→', finalText.substring(0, 20), '相似度:', similarity.toFixed(2));
 
       // 靜默更新為 Final 內容
       displayBuffer[targetIndex] = {
-        text: normalized,
+        text: finalText,
         timestamp: interimItem.timestamp, // 保留原始時間戳
         source: 'final', // 標記為已校正
         corrected: similarity < 0.9 // 如果相似度低，標記為有校正
@@ -543,12 +553,22 @@ function displaySubtitle(text, isFinal) {
 
     if (shouldUpdate) {
       // 更新最後一個 interim
+      // ⚠️ 重要：更新時也要檢查字數限制
+      const otherItemsChars = displayBuffer.slice(0, -1).reduce((sum, item) => sum + item.text.length, 0);
+      const maxAllowed = MAX_TOTAL_CHARS - otherItemsChars;
+
+      let finalText = normalized;
+      if (normalized.length > maxAllowed) {
+        console.log('[Content] ⚠️ Interim 更新超過字數限制，截斷：', normalized.length, '→', maxAllowed);
+        finalText = normalized.slice(-maxAllowed); // 保留最後的字
+      }
+
       displayBuffer[displayBuffer.length - 1] = {
-        text: normalized,
+        text: finalText,
         timestamp: Date.now(),
         source: 'interim'
       };
-      console.log('[Content] 🔄 更新 Interim');
+      console.log('[Content] 🔄 更新 Interim (', finalText.length, '字)');
     } else {
       // 新增一個 interim 項目
       // 先檢查是否需要清理
