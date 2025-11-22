@@ -30,7 +30,7 @@ let currentLanguage = 'en';
 let autoDetect = false;
 let heartbeatTimer = null; // 心跳檢測計時器
 const HEARTBEAT_INTERVAL = 1000; // 1秒檢測一次
-const HEARTBEAT_TIMEOUT = 5000; // 5秒無結果就重啟（避免誤判停頓）
+const HEARTBEAT_TIMEOUT = 3000; // 3秒無結果就重啟
 
 // 檢查瀏覽器支援
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
