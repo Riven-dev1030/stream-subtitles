@@ -390,32 +390,50 @@ function displaySubtitle(text, isFinal) {
 
     console.log('[Content] Buffer 清理前:', displayBuffer.length, '項');
 
-    // 清理所有 interim 來源的項目（這些是臨時的）
+    // 不要立即清理所有 interim，只清理太舊的（超過5秒）
+    const now = Date.now();
     const beforeCleanup = displayBuffer.length;
-    displayBuffer = displayBuffer.filter(item => item.source === 'final');
+    displayBuffer = displayBuffer.filter(item => {
+      // 保留所有 final
+      if (item.source === 'final') return true;
+
+      // interim 只保留最近 5 秒的
+      const age = now - item.timestamp;
+      if (age < 5000) {
+        return true;
+      } else {
+        console.log('[Content] 清理過舊的 interim:', item.text.substring(0, 20) + '...');
+        return false;
+      }
+    });
     const afterCleanup = displayBuffer.length;
 
     if (beforeCleanup !== afterCleanup) {
-      console.log('[Content] 已清理', beforeCleanup - afterCleanup, '個 interim 項目');
+      console.log('[Content] 已清理', beforeCleanup - afterCleanup, '個過舊的 interim 項目');
     }
 
     // 智能斷句 - 將長文字切分成多句
     const sentences = smartSplit(normalized);
     console.log('[Content] 斷句結果:', sentences.length, '句');
 
-    // 檢查每個句子是否已經在 buffer 中（只檢查 final 來源的）
-    const finalTexts = displayBuffer.map(item => item.text);
+    // 檢查每個句子是否已經在 buffer 中
+    const allTexts = displayBuffer.map(item => item.text);
     const newSentences = sentences.filter(sentence => {
       // 完全匹配檢查
-      if (finalTexts.includes(sentence)) {
+      if (allTexts.includes(sentence)) {
         console.log('[Content] 句子已存在（完全匹配）:', sentence.substring(0, 20) + '...');
         return false;
       }
 
-      // 檢查是否有任何現有句子包含這個新句子（或反過來）
-      const hasOverlap = finalTexts.some(existing => {
-        if (existing.includes(sentence) || sentence.includes(existing)) {
-          console.log('[Content] 句子有重疊:', sentence.substring(0, 20) + '...');
+      // 改進的重疊檢測：只有當相似度非常高時才認為是重疊
+      // 不再使用簡單的 includes，改用長度比較
+      const hasOverlap = allTexts.some(existing => {
+        const longer = existing.length > sentence.length ? existing : sentence;
+        const shorter = existing.length > sentence.length ? sentence : existing;
+
+        // 只有當短的完全包含在長的裡面，且長度差距很小時，才認為是重疊
+        if (longer.includes(shorter) && (longer.length - shorter.length) <= 3) {
+          console.log('[Content] 句子有高度重疊:', sentence.substring(0, 20) + '...');
           return true;
         }
         return false;
@@ -445,20 +463,40 @@ function displaySubtitle(text, isFinal) {
     });
 
     // ========== 改進的 Buffer 清理策略 ==========
-    // 1. 先按句子數清理
+    const MIN_DISPLAY_TIME = 3000; // 每個句子至少顯示 3 秒
+    const currentTime = Date.now();
+
+    // 1. 先按句子數清理（但要確保最舊的句子已經顯示夠久）
     while (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
-      const removed = displayBuffer.shift();
-      console.log('[Content] 移除舊句子（超過句數限制）:', removed.text.substring(0, 20) + '...');
+      // 檢查最舊的句子是否已經顯示夠久
+      const oldest = displayBuffer[0];
+      const displayDuration = currentTime - oldest.timestamp;
+
+      if (displayDuration >= MIN_DISPLAY_TIME) {
+        const removed = displayBuffer.shift();
+        console.log('[Content] 移除舊句子（超過句數限制，已顯示', Math.round(displayDuration / 1000), '秒）:', removed.text.substring(0, 20) + '...');
+      } else {
+        console.log('[Content] ⏳ 最舊句子還不能移除（僅顯示', Math.round(displayDuration / 1000), '秒，需要3秒）');
+        break; // 不移除，等下次再檢查
+      }
     }
 
-    // 2. 再按總字符數清理
+    // 2. 再按總字符數清理（同樣要確保顯示時間夠久）
     let totalChars = displayBuffer.reduce((sum, item) => sum + item.text.length, 0);
     console.log('[Content] 當前總字符數:', totalChars);
 
     while (totalChars > MAX_TOTAL_CHARS && displayBuffer.length > 1) {
-      const removed = displayBuffer.shift();
-      totalChars -= removed.text.length;
-      console.log('[Content] 移除舊句子（超過字符限制）:', removed.text.substring(0, 20) + '...', '剩餘:', totalChars, '字');
+      const oldest = displayBuffer[0];
+      const displayDuration = currentTime - oldest.timestamp;
+
+      if (displayDuration >= MIN_DISPLAY_TIME) {
+        const removed = displayBuffer.shift();
+        totalChars -= removed.text.length;
+        console.log('[Content] 移除舊句子（超過字符限制，已顯示', Math.round(displayDuration / 1000), '秒）:', removed.text.substring(0, 20) + '...', '剩餘:', totalChars, '字');
+      } else {
+        console.log('[Content] ⏳ 最舊句子還不能移除（僅顯示', Math.round(displayDuration / 1000), '秒）');
+        break;
+      }
     }
 
     // 限制歷史記錄長度
