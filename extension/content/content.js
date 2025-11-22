@@ -398,6 +398,78 @@ function cleanupBuffer() {
   }
 }
 
+// 分層清理函數 - 在加入新句子前確保有足夠空間
+// 這個函數會分三層漸進式清理，確保總字數限制一定生效
+function cleanupBeforeAdd(newSentences) {
+  // 計算新句子需要的字符數
+  const newCharsNeeded = newSentences.reduce((sum, s) => sum + s.length, 0);
+  let currentChars = displayBuffer.reduce((sum, item) => sum + item.text.length, 0);
+  const totalAfterAdd = currentChars + newCharsNeeded;
+
+  console.log('[Content] 🔍 預檢查：當前', currentChars, '字 + 新增', newCharsNeeded, '字 = 總共', totalAfterAdd, '字');
+
+  // 如果加入後不會超過限制，不需要清理
+  if (totalAfterAdd <= MAX_TOTAL_CHARS) {
+    console.log('[Content] ✅ 字數在限制內，無需清理');
+    return;
+  }
+
+  const needToRemove = totalAfterAdd - MAX_TOTAL_CHARS;
+  let removed = 0;
+  const now = Date.now();
+
+  console.log('[Content] ⚠️ 需要清理', needToRemove, '字以騰出空間');
+
+  // 第1層：優先清理顯示時間 ≥ 1.5秒 的句子
+  while (removed < needToRemove && displayBuffer.length > 0) {
+    const oldest = displayBuffer[0];
+    const displayDuration = now - oldest.timestamp;
+
+    if (displayDuration >= MIN_DISPLAY_TIME) {
+      removed += oldest.text.length;
+      const removedItem = displayBuffer.shift();
+      currentChars -= removedItem.text.length;
+      console.log('[Content] 🗑️ 第1層清理（≥1.5秒）:', removedItem.text.substring(0, 20) + '...', '(已顯示', Math.round(displayDuration / 1000), '秒)');
+    } else {
+      break; // 如果最舊的句子顯示時間不足，停止第1層清理
+    }
+  }
+
+  // 第2層：如果還不夠，清理顯示時間 ≥ 0.5秒 的句子
+  if (removed < needToRemove) {
+    console.log('[Content] ⚡ 第1層清理不足，啟動第2層（≥0.5秒）');
+    while (removed < needToRemove && displayBuffer.length > 0) {
+      const oldest = displayBuffer[0];
+      const displayDuration = now - oldest.timestamp;
+
+      if (displayDuration >= 500) {
+        removed += oldest.text.length;
+        const removedItem = displayBuffer.shift();
+        currentChars -= removedItem.text.length;
+        console.log('[Content] 🗑️ 第2層清理（≥0.5秒）:', removedItem.text.substring(0, 20) + '...', '(已顯示', Math.round(displayDuration / 1000), '秒)');
+      } else {
+        break; // 如果最舊的句子顯示時間不足，停止第2層清理
+      }
+    }
+  }
+
+  // 第3層：如果還是不夠，強制清理（無視時間），但至少保留1句
+  if (removed < needToRemove) {
+    console.log('[Content] 🚨 第2層清理不足，啟動第3層（強制清理）');
+    while (removed < needToRemove && displayBuffer.length > 1) {
+      const oldest = displayBuffer[0];
+      const displayDuration = now - oldest.timestamp;
+      removed += oldest.text.length;
+      const removedItem = displayBuffer.shift();
+      currentChars -= removedItem.text.length;
+      console.log('[Content] 🗑️ 第3層清理（強制）:', removedItem.text.substring(0, 20) + '...', '(僅顯示', Math.round(displayDuration / 1000), '秒)');
+    }
+  }
+
+  const finalChars = displayBuffer.reduce((sum, item) => sum + item.text.length, 0);
+  console.log('[Content] ✅ 清理完成：清理了', removed, '字，剩餘', finalChars, '字，Buffer 剩', displayBuffer.length, '項');
+}
+
 // 顯示字幕
 function displaySubtitle(text, isFinal) {
   if (!text) return;
@@ -496,6 +568,12 @@ function displaySubtitle(text, isFinal) {
     });
 
     console.log('[Content] 新增', newSentences.length, '個新句子');
+
+    // ========== 在加入新句子前，先清理出足夠空間 ==========
+    // 呼叫分層清理函數，確保總字數不會超過限制
+    if (newSentences.length > 0) {
+      cleanupBeforeAdd(newSentences);
+    }
 
     // 加入新句子
     newSentences.forEach(sentence => {
