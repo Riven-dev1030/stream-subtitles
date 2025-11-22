@@ -100,12 +100,63 @@ const HEARTBEAT_TIMEOUT = 3000;  // 3秒無結果就重啟
 
 ---
 
+### 🔄 2025-11-21 下午 - 修復混亂的清除邏輯
+
+#### 新發現的問題
+
+用戶反映：**字幕清除順序混亂**
+- 症狀：字幕跑了4行，清除的不是第1行（最舊），而是第2、4行
+- 影響：用戶還沒看清字幕就被移除了
+
+#### 根本原因分析
+
+1. **濫用 filter() 移除 interim**
+```javascript
+// 錯誤的做法（舊代碼）
+displayBuffer = displayBuffer.filter(item => item.source === 'final');
+// 這會移除所有 interim，無論位置在哪！
+```
+
+2. **過度激進的重疊檢測**
+```javascript
+// 太寬鬆（舊代碼）
+if (existing.includes(sentence) || sentence.includes(existing)) {
+  // "Hello world" 會包含 "Hello"，但它們可能是不同的句子
+}
+```
+
+3. **缺少最小顯示時間**
+- 字幕可能剛出現就被移除
+- 用戶根本來不及閱讀
+
+#### 修復方案
+
+1. **改進 interim 清理** (extension/content/content.js:393-413)
+   - 只清理超過 5 秒的舊 interim
+   - 保留最近的 interim 讓用戶看到
+
+2. **優化重疊檢測** (extension/content/content.js:429-440)
+   - 只有當長度差距 ≤ 3 字時才認為重疊
+   - 減少誤判
+
+3. **添加最小顯示時間** (extension/content/content.js:466-500)
+   - 每個句子至少顯示 **3 秒**
+   - 即使超限，也要等顯示夠久才清除
+
+4. **確保 FIFO 順序**
+   - 永遠使用 `shift()` 移除最舊的（第一個）
+   - 清理順序可預測
+
+---
+
 ## 待辦事項
 
 - [ ] 深入調查字幕卡住的根本原因
 - [ ] 考慮添加更詳細的除錯日誌
 - [ ] 研究 Chrome 和 Edge 的 Speech Recognition 行為差異
 - [ ] 測試在不同網站和環境下的穩定性
+- [x] 修復混亂的清除邏輯
+- [x] 確保字幕至少顯示 3 秒
 
 ---
 
