@@ -549,6 +549,350 @@ const MAX_INTERIM_DISPLAY_CHARS = 35; // Interim 最多 35 字
 
 ---
 
+## 2025-11-22 下午 - Interim 主導模式重大重構
+
+### 🎯 核心問題：Final 延遲太久
+
+**用戶反饋**：
+- Final 結果延遲 7-12 秒
+- 字幕內容嚴重落後影片進度
+- 觀看體驗很差，看到的資訊已過時
+
+**設計決策：改為 Interim 主導模式**
+
+傳統模式問題：
+- ❌ Final 延遲 7-12 秒（太慢）
+- ✅ Interim 延遲 ~0 秒（即時）
+
+**解決方案** (Commit: `81d86d0`):
+
+#### 1. Interim 成為主要字幕來源
+```javascript
+// Interim 立即加入 displayBuffer
+if (!isFinal) {
+  // 檢測是否更新現有句子
+  if (shouldUpdate) {
+    displayBuffer[displayBuffer.length - 1] = {
+      text: finalText,
+      timestamp: Date.now(),
+      source: 'interim'
+    };
+  } else {
+    // 新句子：加入 buffer
+    displayBuffer.push({
+      text: normalized,
+      timestamp: Date.now(),
+      source: 'interim'
+    });
+  }
+}
+```
+
+#### 2. Final 改為靜默校正角色
+```javascript
+if (isFinal) {
+  // 找到對應的 interim 項目
+  let targetIndex = -1;
+  for (let i = displayBuffer.length - 1; i >= 0; i--) {
+    if (displayBuffer[i].source === 'interim') {
+      targetIndex = i;
+      break;
+    }
+  }
+
+  if (targetIndex >= 0) {
+    const similarity = calculateSimilarity(interimText, finalText);
+
+    // 靜默更新（不重新顯示）
+    displayBuffer[targetIndex] = {
+      text: finalText,
+      timestamp: interimItem.timestamp,
+      source: 'final',
+      corrected: similarity < 0.9
+    };
+  }
+}
+```
+
+#### 3. 新增相似度計算函數
+```javascript
+function calculateSimilarity(str1, str2) {
+  if (!str1 || !str2) return 0;
+  if (str1 === str2) return 1;
+
+  const longer = str1.length > str2.length ? str1 : str2;
+  const shorter = str1.length > str2.length ? str2 : str1;
+
+  let matches = 0;
+  for (let i = 0; i < shorter.length; i++) {
+    if (longer.includes(shorter[i])) matches++;
+  }
+  return matches / longer.length;
+}
+```
+
+### ✅ 改進效果
+
+| 項目 | 舊模式（Final 主導） | 新模式（Interim 主導） |
+|-----|-----------------|-------------------|
+| **延遲** | 7-12 秒 | ~0 秒 |
+| **即時性** | ❌ 嚴重落後 | ✅ 即時跟上 |
+| **準確性** | ✅ 最終準確 | ✅ 背景校正 |
+| **體驗** | ❌ 資訊過時 | ✅ 流暢自然 |
+
+### 📝 相關提交
+- Commit: `81d86d0` - feat: 改為 Interim 主導解決 Final 延遲問題
+- 代碼變更: -156 行 +102 行（大幅簡化）
+
+---
+
+## 2025-11-22 下午 - 修復字數限制失效問題
+
+### 🐛 嚴重 Bug：字數限制完全失效
+
+**用戶截圖顯示**：
+- 單句字幕顯示 170+ 字（應該最多 50 字）
+- 有時短暫顯示 340 字（170 interim + 170 final）
+- 用戶反饋：「我是看影片還是看文章？」
+
+### 🔍 根本原因
+
+**問題 1：Interim 更新時沒有檢查字數限制**
+```javascript
+// 錯誤的代碼（舊版）
+displayBuffer[displayBuffer.length - 1] = {
+  text: normalized,  // ⚠️ 沒有檢查長度！
+  timestamp: Date.now(),
+  source: 'interim'
+};
+```
+
+**問題 2：Final 校正時也沒檢查字數限制**
+```javascript
+// 錯誤的代碼（舊版）
+displayBuffer[targetIndex] = {
+  text: normalized,  // ⚠️ 沒有檢查長度！
+  timestamp: interimItem.timestamp,
+  source: 'final'
+};
+```
+
+### 🔧 修復方案 (Commit: `a4ad0fe`)
+
+#### 修復 1：Interim 更新時強制檢查字數
+```javascript
+// 計算其他項目的字數
+const otherItemsChars = displayBuffer
+  .slice(0, -1)
+  .reduce((sum, item) => sum + item.text.length, 0);
+
+// 計算允許的最大字數
+const maxAllowed = MAX_TOTAL_CHARS - otherItemsChars;
+
+// 截斷文字
+let finalText = normalized;
+if (normalized.length > maxAllowed) {
+  finalText = normalized.slice(-maxAllowed);
+  console.warn(`⚠️ Interim 超長（${normalized.length}字），截斷為 ${maxAllowed} 字`);
+}
+```
+
+#### 修復 2：Final 校正時也要檢查字數
+```javascript
+// 計算除了被校正項目外的其他項目字數
+const otherItemsChars = displayBuffer
+  .filter((_, i) => i !== targetIndex)
+  .reduce((sum, item) => sum + item.text.length, 0);
+
+const maxAllowed = MAX_TOTAL_CHARS - otherItemsChars;
+
+// 截斷 Final 文字
+let finalText = normalized;
+if (normalized.length > maxAllowed) {
+  finalText = normalized.slice(-maxAllowed);
+}
+```
+
+### ✅ 修復效果
+- ✅ 總字數嚴格控制在 50 字以內
+- ✅ 不會再出現 170 字或 340 字的情況
+- ✅ 版面乾淨、可讀性高
+
+---
+
+## 2025-11-22 下午 - 修復日誌負數和多 Interim 累積
+
+### 🐛 發現兩個 Bug
+
+**Bug 1：日誌顯示負數**
+```
+[Content] 🗑️ 分層清理(L2)：清理 343 字，剩餘 -343 字
+```
+
+**Bug 2：多個 Interim 累積**
+- Console 顯示清理了 343 字
+- 但總字數限制是 50 字
+- 顯然有多個 interim 在 buffer 中累積
+
+### 🔍 根本原因分析
+
+**Bug 1 原因：雙重減法**
+```javascript
+// 錯誤的代碼（舊版）
+while (removed < needToRemove && displayBuffer.length > 0) {
+  removed += oldest.text.length;
+  displayBuffer.shift();
+  currentChars -= oldest.text.length;  // ← 已經減了
+}
+
+console.log(`剩餘 ${currentChars - removed} 字`);  // ← 又減一次！
+```
+
+**Bug 2 原因：沒清理舊 Interim**
+```javascript
+// 錯誤的代碼（舊版）
+else {
+  // 新 interim 直接加入
+  displayBuffer.push({
+    text: normalized,
+    timestamp: Date.now(),
+    source: 'interim'
+  });
+  // ⚠️ 但舊的 interim 還在 buffer 裡！
+}
+```
+
+### 🔧 修復方案 (Commit: `5aaef33`)
+
+#### 修復 1：移除重複減法
+```javascript
+// 修正後
+console.log(`[Content] 🗑️ 分層清理(L${layer})：清理 ${removed} 字，剩餘 ${currentChars} 字`);
+// currentChars 已經是清理後的值，不需要再減 removed
+```
+
+#### 修復 2：新增前清理舊 Interim
+```javascript
+// 新增 interim 前，先清理所有舊的 interim
+const oldInterimCount = displayBuffer.filter(item => item.source === 'interim').length;
+if (oldInterimCount > 0) {
+  console.log(`[Content] 🗑️ 清理 ${oldInterimCount} 個舊 interim`);
+  displayBuffer = displayBuffer.filter(item => item.source === 'final');
+}
+
+// 確保 buffer 中最多只有 1 個 interim
+```
+
+### ✅ 修復效果
+- ✅ 日誌數字正確，不再顯示負數
+- ✅ displayBuffer 中最多只有 1 個 interim
+- ✅ 不再出現 343 字的累積問題
+- ✅ 字數嚴格控制在 50 字以內
+
+---
+
+## 2025-11-22 下午 - 添加存活計時器監控重啟頻率
+
+### 🎯 需求：監控重啟頻率
+
+**用戶需求**：
+- 想知道語音辨識重啟的頻率
+- 分析是否有異常重啟
+- 了解會話穩定性
+
+### 🔧 實作方案 (Commit: `782e3ef`)
+
+#### 1. 新增監控變數
+```javascript
+let sessionStartTime = null;  // 會話開始時間
+let restartCount = 0;         // 重啟次數
+let lastRestartTime = null;   // 上次重啟時間
+```
+
+#### 2. 會話開始時初始化
+```javascript
+function startRecording(language, autoDetectLang) {
+  if (!sessionStartTime) {
+    sessionStartTime = Date.now();
+    restartCount = 0;
+    lastRestartTime = null;
+    console.log(`[Content] 📊 會話開始，時間: ${new Date().toLocaleTimeString()}`);
+  }
+  // ...
+}
+```
+
+#### 3. 心跳檢查時顯示詳細資訊
+```javascript
+heartbeatTimer = setInterval(() => {
+  const now = Date.now();
+  const timeSinceLastResult = now - lastResultTimestamp;
+  const sessionDuration = sessionStartTime ? Math.round((now - sessionStartTime) / 1000) : 0;
+  const timeSinceLastRestart = lastRestartTime ? Math.round((now - lastRestartTime) / 1000) : 0;
+
+  console.log(
+    `[Content] ⏱️ 心跳檢查：` +
+    `距上次結果 ${Math.round(timeSinceLastResult / 1000)}秒 | ` +
+    `會話時長 ${sessionDuration}秒 | ` +
+    `重啟次數 ${restartCount}次` +
+    (lastRestartTime ? ` | 距上次重啟 ${timeSinceLastRestart}秒` : '')
+  );
+  // ...
+}, HEARTBEAT_INTERVAL);
+```
+
+#### 4. 重啟時記錄統計
+```javascript
+if (timeSinceLastResult > HEARTBEAT_TIMEOUT && isRecording) {
+  restartCount++;
+  lastRestartTime = now;
+
+  console.warn(
+    `[Content] ⚠️ 偵測到可能卡住（${HEARTBEAT_TIMEOUT/1000}秒無結果），第 ${restartCount} 次重啟...` +
+    `\n📊 會話時長：${sessionDuration}秒` +
+    `\n📊 平均重啟間隔：${Math.round(sessionDuration / restartCount)}秒`
+  );
+
+  stopRecording(true);  // 參數 true = 保留會話資訊
+  setTimeout(() => startRecording(lang, auto), 500);
+}
+```
+
+#### 5. 會話結束時顯示總結
+```javascript
+function stopRecording(skipSessionReset = false) {
+  if (!skipSessionReset && sessionStartTime) {
+    const sessionDuration = Math.round((Date.now() - sessionStartTime) / 1000);
+    console.log(
+      `[Content] 📊 會話結束，總時長: ${sessionDuration}秒，重啟次數: ${restartCount}次`
+    );
+    sessionStartTime = null;
+    restartCount = 0;
+    lastRestartTime = null;
+  }
+  // ...
+}
+```
+
+### 📊 Console 日誌範例
+
+```
+[Content] 📊 會話開始，時間: 14:30:25
+[Content] ⏱️ 心跳檢查：距上次結果 1秒 | 會話時長 45秒 | 重啟次數 2次 | 距上次重啟 20秒
+[Content] ⚠️ 偵測到可能卡住（3秒無結果），第 3 次重啟...
+📊 會話時長：60秒
+📊 平均重啟間隔：20秒
+[Content] 📊 會話結束，總時長: 120秒，重啟次數: 5次
+```
+
+### ✅ 功能效果
+- ✅ 即時監控會話時長
+- ✅ 追蹤重啟次數和頻率
+- ✅ 計算平均重啟間隔
+- ✅ 幫助診斷穩定性問題
+
+---
+
 ## 2025-11-22 下午 - 放寬心跳超時避免誤判重啟
 
 ### 🐛 問題描述
