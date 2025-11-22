@@ -30,7 +30,7 @@ let currentLanguage = 'en';
 let autoDetect = false;
 let heartbeatTimer = null; // 心跳檢測計時器
 const HEARTBEAT_INTERVAL = 1000; // 1秒檢測一次
-const HEARTBEAT_TIMEOUT = 6000; // 6秒無結果就重啟（從3秒放寬以減少誤判）
+const HEARTBEAT_TIMEOUT = 2500; // 2.5秒無結果就重啟（經過測試我覺得這是在卡住後能以最短的時間繼續輸出字幕的恰當的數字)
 
 // 存活監控變數
 let sessionStartTime = null; // 會話開始時間
