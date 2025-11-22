@@ -96,6 +96,13 @@ function init() {
 
   // 鍵盤快捷鍵
   document.addEventListener('keydown', handleKeyboardShortcut);
+
+  // ========== 啟動定時清理器 ==========
+  // 每 1 秒檢查一次 Buffer，自動清理已顯示超過最小時間的句子
+  setInterval(() => {
+    cleanupBuffer();
+  }, 1000);
+  console.log('[Content] ✅ 定時清理器已啟動（每 1 秒檢查一次）');
 }
 
 // 開始錄音
@@ -347,6 +354,50 @@ function normalizeText(text) {
   return text.trim().replace(/\s+/g, ' ');
 }
 
+// Buffer 清理函數 - 定期清理已顯示超過最小時間的句子
+function cleanupBuffer() {
+  if (displayBuffer.length === 0) return;
+
+  const currentTime = Date.now();
+  let cleaned = false;
+
+  // 1. 按句子數清理（確保最舊的句子已經顯示夠久）
+  while (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
+    const oldest = displayBuffer[0];
+    const displayDuration = currentTime - oldest.timestamp;
+
+    if (displayDuration >= MIN_DISPLAY_TIME) {
+      const removed = displayBuffer.shift();
+      cleaned = true;
+      console.log('[Content] 🗑️ 定時清理（超過句數，已顯示', Math.round(displayDuration / 1000), '秒）:', removed.text.substring(0, 20) + '...');
+    } else {
+      break;
+    }
+  }
+
+  // 2. 按總字符數清理（確保顯示時間夠久）
+  let totalChars = displayBuffer.reduce((sum, item) => sum + item.text.length, 0);
+
+  while (totalChars > MAX_TOTAL_CHARS && displayBuffer.length > 1) {
+    const oldest = displayBuffer[0];
+    const displayDuration = currentTime - oldest.timestamp;
+
+    if (displayDuration >= MIN_DISPLAY_TIME) {
+      const removed = displayBuffer.shift();
+      totalChars -= removed.text.length;
+      cleaned = true;
+      console.log('[Content] 🗑️ 定時清理（超過字符，已顯示', Math.round(displayDuration / 1000), '秒）:', removed.text.substring(0, 20) + '...', '剩餘:', totalChars, '字');
+    } else {
+      break;
+    }
+  }
+
+  // 如果清理了內容，更新顯示
+  if (cleaned) {
+    updateSubtitleDisplay(interimSubtitle);
+  }
+}
+
 // 顯示字幕
 function displaySubtitle(text, isFinal) {
   if (!text) return;
@@ -465,40 +516,8 @@ function displaySubtitle(text, isFinal) {
     });
 
     // ========== Final Buffer 清理策略 ==========
-    const currentTime = Date.now();
-
-    // 1. 先按句子數清理（但要確保最舊的句子已經顯示夠久）
-    while (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
-      // 檢查最舊的句子是否已經顯示夠久
-      const oldest = displayBuffer[0];
-      const displayDuration = currentTime - oldest.timestamp;
-
-      if (displayDuration >= MIN_DISPLAY_TIME) {
-        const removed = displayBuffer.shift();
-        console.log('[Content] 移除舊句子（超過句數限制，已顯示', Math.round(displayDuration / 1000), '秒）:', removed.text.substring(0, 20) + '...');
-      } else {
-        console.log('[Content] ⏳ 最舊句子還不能移除（僅顯示', Math.round(displayDuration / 1000), '秒，需要1.5秒）');
-        break; // 不移除，等下次再檢查
-      }
-    }
-
-    // 2. 再按總字符數清理（同樣要確保顯示時間夠久）
-    let totalChars = displayBuffer.reduce((sum, item) => sum + item.text.length, 0);
-    console.log('[Content] 當前總字符數:', totalChars);
-
-    while (totalChars > MAX_TOTAL_CHARS && displayBuffer.length > 1) {
-      const oldest = displayBuffer[0];
-      const displayDuration = currentTime - oldest.timestamp;
-
-      if (displayDuration >= MIN_DISPLAY_TIME) {
-        const removed = displayBuffer.shift();
-        totalChars -= removed.text.length;
-        console.log('[Content] 移除舊句子（超過字符限制，已顯示', Math.round(displayDuration / 1000), '秒）:', removed.text.substring(0, 20) + '...', '剩餘:', totalChars, '字');
-      } else {
-        console.log('[Content] ⏳ 最舊句子還不能移除（僅顯示', Math.round(displayDuration / 1000), '秒）');
-        break;
-      }
-    }
+    // 調用統一的清理函數
+    cleanupBuffer();
 
     // 限制歷史記錄長度
     if (subtitleHistory.length > 50) {
