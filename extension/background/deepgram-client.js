@@ -324,9 +324,17 @@ class DeepgramClient {
 }
 
 // Export for ES6 modules
-export default DeepgramClient;
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = DeepgramClient;
+}
 
-// For non-module environments (Manifest V3 service worker)
+// For Chrome Extension environment
+// Service Worker: 使用 self.DeepgramClient
+// Popup/Content: 使用 window.DeepgramClient
+if (typeof self !== 'undefined') {
+  self.DeepgramClient = DeepgramClient;
+}
+
 if (typeof window !== 'undefined') {
   window.DeepgramClient = DeepgramClient;
 }
