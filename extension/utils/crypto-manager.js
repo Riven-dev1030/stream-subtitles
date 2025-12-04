@@ -283,11 +283,6 @@ class CryptoManager {
   }
 }
 
-// Export for ES6 modules
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = CryptoManager;
-}
-
 // For Chrome Extension environment
 // Service Worker: 使用 self.CryptoManager
 // Popup/Content: 使用 window.CryptoManager
