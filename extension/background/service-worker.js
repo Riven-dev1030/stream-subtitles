@@ -6,11 +6,10 @@ console.log('[Background] Service worker 已載入');
 // 動態導入模組（路徑相對於 service-worker.js 所在目錄）
 importScripts(
   '../utils/crypto-manager.js',      // 回到上層目錄，再進入 utils/
-  './deepgram-client.js',            // 同目錄下的 deepgram-client.js
-  './audio-capture-manager.js'       // 音訊捕獲管理器
+  './deepgram-client.js'             // 同目錄下的 deepgram-client.js
 );
 
-console.log('[Background] Deepgram 與音訊捕獲模組已載入');
+console.log('[Background] Deepgram 模組已載入');
 
 // 擴充功能安裝或更新時
 chrome.runtime.onInstalled.addListener((details) => {
@@ -38,9 +37,9 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 let deepgramClient = null;
 let cryptoManager = null;
-let audioCaptureManager = null;
 let isDeepgramActive = false;
 let currentTabId = null;
+let offscreenDocumentCreated = false;
 
 // 初始化加密管理器
 async function initCryptoManager() {
@@ -50,6 +49,54 @@ async function initCryptoManager() {
     console.log('[Background] CryptoManager 已初始化');
   }
   return cryptoManager;
+}
+
+// ============================================
+// Offscreen Document 管理
+// ============================================
+
+/**
+ * 創建 Offscreen Document（如果尚未存在）
+ */
+async function createOffscreenDocument() {
+  // 檢查是否已經存在 offscreen document
+  const existingContexts = await chrome.runtime.getContexts({
+    contextTypes: ['OFFSCREEN_DOCUMENT'],
+    documentUrls: [chrome.runtime.getURL('offscreen/offscreen.html')]
+  });
+
+  if (existingContexts.length > 0) {
+    console.log('[Background] Offscreen document 已存在');
+    offscreenDocumentCreated = true;
+    return;
+  }
+
+  // 創建新的 offscreen document
+  await chrome.offscreen.createDocument({
+    url: 'offscreen/offscreen.html',
+    reasons: ['USER_MEDIA'], // 用於 getUserMedia
+    justification: '捕獲 Tab 音訊以進行即時語音辨識'
+  });
+
+  offscreenDocumentCreated = true;
+  console.log('[Background] Offscreen document 已創建');
+}
+
+/**
+ * 關閉 Offscreen Document
+ */
+async function closeOffscreenDocument() {
+  if (!offscreenDocumentCreated) {
+    return;
+  }
+
+  try {
+    await chrome.offscreen.closeDocument();
+    offscreenDocumentCreated = false;
+    console.log('[Background] Offscreen document 已關閉');
+  } catch (error) {
+    console.error('[Background] 關閉 Offscreen document 失敗:', error);
+  }
 }
 
 // ============================================
@@ -68,6 +115,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function handleMessage(message, sender, sendResponse) {
   try {
     switch (message.action) {
+      case 'audioData':
+        // 從 Offscreen Document 接收音訊數據
+        handleAudioData(message.data);
+        sendResponse({ success: true });
+        break;
+
       case 'updateCorrections':
         // 處理修正記錄更新
         console.log('[Background] 更新修正記錄，共', message.corrections?.length || 0, '筆');
@@ -110,6 +163,20 @@ async function handleMessage(message, sender, sendResponse) {
   } catch (error) {
     console.error('[Background] 處理訊息失敗:', error);
     sendResponse({ success: false, error: error.message });
+  }
+}
+
+// ============================================
+// 音訊數據處理
+// ============================================
+
+function handleAudioData(audioDataArray) {
+  // 將 Array 轉回 Int16Array
+  const int16Data = new Int16Array(audioDataArray);
+
+  // 發送到 Deepgram
+  if (deepgramClient && deepgramClient.isConnected) {
+    deepgramClient.sendAudio(int16Data.buffer);
   }
 }
 
@@ -200,17 +267,19 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', sendRes
       throw new Error('未設定 Deepgram API Key');
     }
 
-    // 2. 初始化 AudioCaptureManager
-    if (!audioCaptureManager) {
-      audioCaptureManager = new AudioCaptureManager();
-    }
+    // 2. 創建 Offscreen Document（用於音訊捕獲）
+    await createOffscreenDocument();
 
-    // 3. 初始化 DeepgramClient
+    // 3. 取得 Tab 音訊串流 ID
+    const streamId = await getTabAudioStreamId(tabId);
+    console.log('[Background] 已取得音訊串流 ID');
+
+    // 4. 初始化 DeepgramClient
     if (!deepgramClient) {
       deepgramClient = new DeepgramClient(apiKey);
     }
 
-    // 4. 設定 Deepgram 結果回調
+    // 5. 設定 Deepgram 結果回調
     deepgramClient.onResult = (result) => {
       console.log('[Background] Deepgram 結果:', result.isFinal ? 'Final' : 'Interim', result.text);
 
@@ -228,7 +297,7 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', sendRes
       });
     };
 
-    // 5. 設定 Deepgram 錯誤回調
+    // 6. 設定 Deepgram 錯誤回調
     deepgramClient.onError = (error) => {
       console.error('[Background] Deepgram 錯誤:', error);
 
@@ -244,19 +313,15 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', sendRes
       handleStopDeepgramRecognition(() => {});
     };
 
-    // 6. 連接到 Deepgram
+    // 7. 連接到 Deepgram
     await deepgramClient.connect(language);
     console.log('[Background] Deepgram WebSocket 已連接');
 
-    // 7. 設定音訊數據回調（將音訊串流到 Deepgram）
-    audioCaptureManager.setAudioDataCallback((audioData) => {
-      if (deepgramClient && deepgramClient.isConnected) {
-        deepgramClient.sendAudio(audioData.buffer);
-      }
+    // 8. 通知 Offscreen Document 開始音訊捕獲
+    await chrome.runtime.sendMessage({
+      action: 'startAudioCapture',
+      streamId: streamId
     });
-
-    // 8. 開始捕獲音訊
-    await audioCaptureManager.startCapture(tabId);
     console.log('[Background] 音訊捕獲已啟動');
 
     // 9. 更新狀態
@@ -278,6 +343,30 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', sendRes
       error: error.message
     });
   }
+}
+
+/**
+ * 取得 Tab 音訊串流 ID
+ */
+function getTabAudioStreamId(tabId) {
+  return new Promise((resolve, reject) => {
+    chrome.tabCapture.getMediaStreamId(
+      { targetTabId: tabId },
+      (streamId) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+
+        if (!streamId) {
+          reject(new Error('無法取得音訊串流 ID'));
+          return;
+        }
+
+        resolve(streamId);
+      }
+    );
+  });
 }
 
 // ============================================
@@ -311,9 +400,18 @@ async function handleStopDeepgramRecognition(sendResponse) {
 async function cleanupDeepgramResources() {
   console.log('[Background] 清理 Deepgram 資源');
 
-  // 停止音訊捕獲
-  if (audioCaptureManager) {
-    await audioCaptureManager.stopCapture();
+  // 通知 Offscreen Document 停止音訊捕獲
+  if (offscreenDocumentCreated) {
+    try {
+      await chrome.runtime.sendMessage({
+        action: 'stopAudioCapture'
+      });
+    } catch (error) {
+      console.error('[Background] 停止音訊捕獲失敗:', error);
+    }
+
+    // 關閉 Offscreen Document
+    await closeOffscreenDocument();
   }
 
   // 斷開 Deepgram 連接
