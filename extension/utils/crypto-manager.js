@@ -283,16 +283,20 @@ class CryptoManager {
   }
 }
 
-// 創建全域實例
-const cryptoManager = new CryptoManager();
-
 // Export for ES6 modules
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = CryptoManager;
 }
 
 // For Chrome Extension environment
+// Service Worker: 使用 self.CryptoManager
+// Popup/Content: 使用 window.CryptoManager
+if (typeof self !== 'undefined') {
+  self.CryptoManager = CryptoManager;
+}
+
 if (typeof window !== 'undefined') {
   window.CryptoManager = CryptoManager;
-  window.cryptoManager = cryptoManager;
+  // 在 Popup/Content Script 中創建全域實例
+  window.cryptoManager = new CryptoManager();
 }
