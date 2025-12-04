@@ -101,6 +101,8 @@
     <!-- 語音引擎資訊 -->
     <div class="api-section">
       <h3>🎤 語音引擎</h3>
+
+      <!-- Web Speech API (當前) -->
       <div class="api-status">
         <div class="api-info-box">
           <span class="info-icon">✅</span>
@@ -118,6 +120,61 @@
             2. 如使用 VB-Cable 可直接辨識分頁音訊<br>
             3. 或開啟喇叭讓麥克風捕捉聲音
           </p>
+        </div>
+      </div>
+
+      <!-- Deepgram 設定 (實驗性) -->
+      <div class="deepgram-section" style="margin-top: 15px;">
+        <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;" id="deepgram-toggle">
+          <h4 style="margin: 0;">⚡ Deepgram (實驗性 MVP)</h4>
+          <span class="toggle-icon">▼</span>
+        </div>
+
+        <div class="deepgram-content" style="display: none; margin-top: 10px;">
+          <div class="deepgram-info-box" style="background: #fff3cd; padding: 10px; border-radius: 4px; margin-bottom: 10px;">
+            <p class="small" style="margin: 0;">
+              🚧 <strong>MVP 測試版本</strong><br>
+              更高的辨識精度，但需要 API Key
+            </p>
+          </div>
+
+          <!-- API Key 輸入 -->
+          <div class="api-key-input-group">
+            <label for="deepgram-api-key" style="display: block; margin-bottom: 5px; font-weight: bold; font-size: 12px;">
+              API Key:
+            </label>
+            <div style="display: flex; gap: 5px;">
+              <input
+                type="password"
+                id="deepgram-api-key"
+                placeholder="輸入 Deepgram API Key"
+                style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;"
+              >
+              <button id="save-deepgram-key" class="small-btn" style="padding: 8px 12px;">
+                💾 儲存
+              </button>
+            </div>
+            <p class="small" style="margin: 5px 0 0 0; color: #666;">
+              <span id="key-status">未設定 API Key</span>
+            </p>
+          </div>
+
+          <!-- 測試按鈕 -->
+          <div style="margin-top: 10px;">
+            <button id="test-deepgram-btn" class="secondary-btn" style="width: 100%; font-size: 12px;" disabled>
+              🧪 測試 Deepgram 連接
+            </button>
+          </div>
+
+          <!-- 使用說明 -->
+          <div class="note-box" style="margin-top: 10px;">
+            <p class="small" style="margin: 0;">
+              📖 <strong>如何取得 API Key：</strong><br>
+              1. 前往 <a href="https://console.deepgram.com/signup" target="_blank">Deepgram 註冊</a><br>
+              2. 免費額度：200 美金 / 46,000 分鐘<br>
+              3. 複製 API Key 並貼上
+            </p>
+          </div>
         </div>
       </div>
     </div>

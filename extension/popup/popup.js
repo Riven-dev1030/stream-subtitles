@@ -309,4 +309,114 @@ function getLanguageName(langCode) {
   return names[langCode] || langCode;
 }
 
+// ============================================
+// Deepgram MVP 功能
+// ============================================
+
+// 初始化 Deepgram UI
+function initDeepgramUI() {
+  const toggleBtn = document.getElementById('deepgram-toggle');
+  const content = document.querySelector('.deepgram-content');
+  const saveKeyBtn = document.getElementById('save-deepgram-key');
+  const apiKeyInput = document.getElementById('deepgram-api-key');
+  const testBtn = document.getElementById('test-deepgram-btn');
+  const keyStatus = document.getElementById('key-status');
+
+  // 可折疊區域
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+      const isHidden = content.style.display === 'none';
+      content.style.display = isHidden ? 'block' : 'none';
+      toggleBtn.querySelector('.toggle-icon').textContent = isHidden ? '▲' : '▼';
+    });
+  }
+
+  // 載入已儲存的 API Key
+  chrome.storage.local.get(['deepgramApiKey'], (result) => {
+    if (result.deepgramApiKey) {
+      apiKeyInput.value = result.deepgramApiKey;
+      keyStatus.textContent = '✅ API Key 已設定';
+      keyStatus.style.color = '#28a745';
+      testBtn.disabled = false;
+    }
+  });
+
+  // 儲存 API Key
+  if (saveKeyBtn) {
+    saveKeyBtn.addEventListener('click', async () => {
+      const apiKey = apiKeyInput.value.trim();
+
+      if (!apiKey) {
+        alert('請輸入 API Key');
+        return;
+      }
+
+      // 儲存到 storage
+      await chrome.storage.local.set({ deepgramApiKey: apiKey });
+
+      keyStatus.textContent = '✅ API Key 已儲存';
+      keyStatus.style.color = '#28a745';
+      testBtn.disabled = false;
+
+      // 通知 background script
+      chrome.runtime.sendMessage({
+        action: 'updateDeepgramKey',
+        apiKey: apiKey
+      });
+
+      alert('API Key 已儲存成功！');
+    });
+  }
+
+  // 測試連接
+  if (testBtn) {
+    testBtn.addEventListener('click', async () => {
+      const apiKey = apiKeyInput.value.trim();
+
+      if (!apiKey) {
+        alert('請先輸入 API Key');
+        return;
+      }
+
+      // 顯示測試中
+      testBtn.disabled = true;
+      testBtn.textContent = '🔄 測試中...';
+      keyStatus.textContent = '測試連接中...';
+      keyStatus.style.color = '#ffc107';
+
+      // 請求 background script 測試
+      chrome.runtime.sendMessage({
+        action: 'testDeepgramConnection',
+        apiKey: apiKey
+      }, (response) => {
+        testBtn.disabled = false;
+        testBtn.textContent = '🧪 測試 Deepgram 連接';
+
+        if (response && response.success) {
+          keyStatus.textContent = '✅ 連接成功！';
+          keyStatus.style.color = '#28a745';
+          alert('Deepgram 連接測試成功！');
+        } else {
+          keyStatus.textContent = '❌ 連接失敗';
+          keyStatus.style.color = '#dc3545';
+          alert(`連接失敗：${response?.error || '未知錯誤'}`);
+        }
+      });
+    });
+  }
+
+  // 監聽輸入變化
+  if (apiKeyInput) {
+    apiKeyInput.addEventListener('input', () => {
+      const hasValue = apiKeyInput.value.trim().length > 0;
+      testBtn.disabled = !hasValue;
+    });
+  }
+}
+
+// 在 init 函數中添加
+document.addEventListener('DOMContentLoaded', () => {
+  init();
+  initDeepgramUI();
+});
 console.log('[Popup] Popup script 載入完成');
