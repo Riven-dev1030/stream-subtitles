@@ -3,6 +3,8 @@
 let currentLanguage = 'en';
 let autoDetect = false;
 let isRecording = false;
+let currentEngine = 'webspeech'; // 'webspeech' 或 'deepgram'
+let hasDeepgramApiKey = false;
 
 // DOM 元素
 const statusIndicator = document.getElementById('status-indicator');
@@ -10,6 +12,9 @@ const statusText = document.getElementById('status-text');
 const startBtn = document.getElementById('start-btn');
 const stopBtn = document.getElementById('stop-btn');
 const langButtons = document.querySelectorAll('.lang-btn');
+const engineButtons = document.querySelectorAll('.engine-btn');
+const engineStatus = document.getElementById('engine-status');
+const deepgramEngineBtn = document.getElementById('deepgram-engine-btn');
 const correctionsList = document.getElementById('corrections-list');
 const clearCorrectionsBtn = document.getElementById('clear-corrections-btn');
 
@@ -18,7 +23,7 @@ const clearCorrectionsBtn = document.getElementById('clear-corrections-btn');
 // 初始化
 document.addEventListener('DOMContentLoaded', init);
 
-function init() {
+async function init() {
   console.log('[Popup] 初始化');
 
   // 載入當前狀態
@@ -27,8 +32,14 @@ function init() {
   // 載入修正記錄
   loadCorrections();
 
+  // 載入引擎設定
+  await loadEngineSettings();
+
   // 綁定事件
   bindEvents();
+
+  // 初始化 Deepgram UI
+  await initDeepgramUI();
 }
 
 // 載入狀態
@@ -89,6 +100,33 @@ function bindEvents() {
     });
   });
 
+  // 引擎選擇按鈕
+  engineButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const engine = btn.dataset.engine;
+
+      // 如果選擇 Deepgram 但沒有 API Key，提示用戶
+      if (engine === 'deepgram' && !hasDeepgramApiKey) {
+        alert('⚠️ 請先設定 Deepgram API Key\n\n請在下方「⚡ Deepgram」區塊中輸入您的 API Key');
+        // 展開 Deepgram 設定區塊
+        const deepgramToggle = document.getElementById('deepgram-toggle');
+        if (deepgramToggle) {
+          deepgramToggle.click();
+        }
+        return;
+      }
+
+      currentEngine = engine;
+
+      // 儲存設定
+      chrome.storage.sync.set({
+        recognitionEngine: currentEngine
+      });
+
+      updateUI();
+    });
+  });
+
   // 開始按鈕
   startBtn.addEventListener('click', startRecording);
 
@@ -110,7 +148,7 @@ function bindEvents() {
 
 // 開始錄音
 function startRecording() {
-  console.log('[Popup] 開始錄音');
+  console.log('[Popup] 開始錄音，引擎:', currentEngine);
 
   // 取得當前分頁
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -128,46 +166,85 @@ function startRecording() {
       return;
     }
 
-    // 直接發送訊息給 content script 開始錄音
-    chrome.tabs.sendMessage(tab.id, {
-      action: 'startRecording',
-      language: currentLanguage,
-      autoDetect: autoDetect
-    }, (response) => {
-      if (chrome.runtime.lastError) {
-        console.error('[Popup] 發送訊息失敗:', chrome.runtime.lastError);
-        alert('❌ 無法連接到頁面\n\n請重新整理頁面後再試。');
-        return;
-      }
+    // 根據引擎類型選擇不同的啟動方式
+    if (currentEngine === 'deepgram') {
+      // 使用 Deepgram：發送訊息到 Service Worker
+      chrome.runtime.sendMessage({
+        action: 'startDeepgramRecognition',
+        tabId: tab.id,
+        language: currentLanguage
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error('[Popup] 啟動 Deepgram 失敗:', chrome.runtime.lastError);
+          alert('❌ 啟動 Deepgram 失敗\n\n' + chrome.runtime.lastError.message);
+          return;
+        }
 
-      if (response && response.success) {
-        isRecording = true;
-        updateUI();
-        console.log('[Popup] 錄音已啟動');
-      } else {
-        alert('❌ 啟動失敗\n\n請確認麥克風權限已開啟。');
-      }
-    });
+        if (response && response.success) {
+          isRecording = true;
+          updateUI();
+          console.log('[Popup] Deepgram 已啟動');
+          alert('✅ Deepgram 辨識已啟動！\n\n字幕將會顯示在頁面上');
+        } else {
+          alert('❌ 啟動失敗\n\n' + (response.error || '未知錯誤'));
+        }
+      });
+    } else {
+      // 使用 Web Speech API：發送訊息給 Content Script
+      chrome.tabs.sendMessage(tab.id, {
+        action: 'startRecording',
+        language: currentLanguage,
+        autoDetect: autoDetect
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error('[Popup] 發送訊息失敗:', chrome.runtime.lastError);
+          alert('❌ 無法連接到頁面\n\n請重新整理頁面後再試。');
+          return;
+        }
+
+        if (response && response.success) {
+          isRecording = true;
+          updateUI();
+          console.log('[Popup] Web Speech API 已啟動');
+        } else {
+          alert('❌ 啟動失敗\n\n請確認麥克風權限已開啟。');
+        }
+      });
+    }
   });
 }
 
 // 停止錄音
 function stopRecording() {
-  console.log('[Popup] 停止錄音');
+  console.log('[Popup] 停止錄音，引擎:', currentEngine);
 
-  // 取得當前分頁
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs && tabs[0]) {
-      chrome.tabs.sendMessage(tabs[0].id, {
-        action: 'stopRecording'
-      }, (response) => {
-        if (!chrome.runtime.lastError) {
-          isRecording = false;
-          updateUI();
-        }
-      });
-    }
-  });
+  if (currentEngine === 'deepgram') {
+    // 停止 Deepgram：發送訊息到 Service Worker
+    chrome.runtime.sendMessage({
+      action: 'stopDeepgramRecognition'
+    }, (response) => {
+      if (response && response.success) {
+        isRecording = false;
+        updateUI();
+        console.log('[Popup] Deepgram 已停止');
+      }
+    });
+  } else {
+    // 停止 Web Speech API：發送訊息給 Content Script
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs && tabs[0]) {
+        chrome.tabs.sendMessage(tabs[0].id, {
+          action: 'stopRecording'
+        }, (response) => {
+          if (!chrome.runtime.lastError) {
+            isRecording = false;
+            updateUI();
+            console.log('[Popup] Web Speech API 已停止');
+          }
+        });
+      }
+    });
+  }
 }
 
 // 更新 UI
@@ -198,6 +275,24 @@ function updateUI() {
     if (activeBtn) {
       activeBtn.classList.add('active');
     }
+  }
+
+  // 更新引擎按鈕
+  engineButtons.forEach(btn => {
+    btn.classList.remove('active');
+  });
+  const activeEngineBtn = document.querySelector(`[data-engine="${currentEngine}"]`);
+  if (activeEngineBtn) {
+    activeEngineBtn.classList.add('active');
+  }
+
+  // 更新引擎狀態文字
+  const engineNames = {
+    'webspeech': 'Web Speech API',
+    'deepgram': 'Deepgram'
+  };
+  if (engineStatus) {
+    engineStatus.textContent = `目前使用：${engineNames[currentEngine] || currentEngine}`;
   }
 }
 
@@ -310,6 +405,43 @@ function getLanguageName(langCode) {
 }
 
 // ============================================
+// 引擎設定
+// ============================================
+
+/**
+ * 載入引擎設定
+ */
+async function loadEngineSettings() {
+  // 從 storage 載入引擎設定
+  chrome.storage.sync.get(['recognitionEngine'], (result) => {
+    if (result.recognitionEngine) {
+      currentEngine = result.recognitionEngine;
+    }
+    updateUI();
+  });
+
+  // 檢查是否有 Deepgram API Key
+  try {
+    const crypto = window.cryptoManager;
+    await crypto.initialize();
+    const apiKey = await crypto.getApiKey();
+    hasDeepgramApiKey = !!apiKey;
+
+    // 更新 Deepgram 按鈕狀態
+    if (!hasDeepgramApiKey) {
+      deepgramEngineBtn.classList.add('disabled');
+      deepgramEngineBtn.title = '需要設定 API Key';
+    } else {
+      deepgramEngineBtn.classList.remove('disabled');
+      deepgramEngineBtn.title = 'Deepgram - 更高精度';
+    }
+  } catch (error) {
+    console.error('[Popup] 檢查 Deepgram API Key 失敗:', error);
+    hasDeepgramApiKey = false;
+  }
+}
+
+// ============================================
 // Deepgram MVP 功能
 // ============================================
 
@@ -409,6 +541,9 @@ async function initDeepgramUI() {
       chrome.runtime.sendMessage({ action: 'updateDeepgramKey' });
 
       alert('API Key 已加密儲存！\n\n🔒 使用 AES-GCM-256 加密');
+
+      // 重新載入引擎設定（更新 Deepgram 按鈕狀態）
+      await loadEngineSettings();
 
     } catch (error) {
       alert(`儲存失敗：${error.message}`);

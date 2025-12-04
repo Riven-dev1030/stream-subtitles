@@ -45,6 +45,26 @@
       </div>
     </div>
 
+    <!-- 引擎選擇 -->
+    <div class="engine-section">
+      <h3>選擇辨識引擎</h3>
+      <div class="engine-buttons">
+        <button class="engine-btn active" data-engine="webspeech">
+          <span class="engine-icon">🎙️</span>
+          <span class="engine-name">Web Speech API</span>
+          <span class="engine-desc">免費，瀏覽器內建</span>
+        </button>
+        <button class="engine-btn" data-engine="deepgram" id="deepgram-engine-btn">
+          <span class="engine-icon">⚡</span>
+          <span class="engine-name">Deepgram</span>
+          <span class="engine-desc">更高精度（需 API Key）</span>
+        </button>
+      </div>
+      <p class="small" style="margin-top: 5px; color: #666;">
+        <span id="engine-status">目前使用：Web Speech API</span>
+      </p>
+    </div>
+
     <!-- 控制按鈕 -->
     <div class="control-section">
       <button id="start-btn" class="primary-btn">
