@@ -51,7 +51,7 @@ class CryptoManager {
 
     // 使用固定密碼 + Extension ID 作為密鑰材料
     const password = `stream-subtitles-master-key-${chrome.runtime.id}`;
-    const keyMaterial = await window.crypto.subtle.importKey(
+    const keyMaterial = await crypto.subtle.importKey(
       'raw',
       encoder.encode(password),
       'PBKDF2',
@@ -60,7 +60,7 @@ class CryptoManager {
     );
 
     // 使用 PBKDF2 派生密鑰
-    this.cryptoKey = await window.crypto.subtle.deriveKey(
+    this.cryptoKey = await crypto.subtle.deriveKey(
       {
         name: 'PBKDF2',
         salt: this.salt,
@@ -92,10 +92,10 @@ class CryptoManager {
       const data = encoder.encode(apiKey);
 
       // 生成隨機 IV
-      const iv = window.crypto.getRandomValues(new Uint8Array(this.ivLength));
+      const iv = crypto.getRandomValues(new Uint8Array(this.ivLength));
 
       // 加密
-      const encrypted = await window.crypto.subtle.encrypt(
+      const encrypted = await crypto.subtle.encrypt(
         {
           name: this.algorithm,
           iv: iv
@@ -136,7 +136,7 @@ class CryptoManager {
       const encrypted = combined.slice(this.ivLength);
 
       // 解密
-      const decrypted = await window.crypto.subtle.decrypt(
+      const decrypted = await crypto.subtle.decrypt(
         {
           name: this.algorithm,
           iv: iv
