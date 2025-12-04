@@ -313,14 +313,19 @@ function getLanguageName(langCode) {
 // Deepgram MVP 功能
 // ============================================
 
-// 初始化 Deepgram UI
-function initDeepgramUI() {
+// 初始化 Deepgram UI（使用加密）
+async function initDeepgramUI() {
   const toggleBtn = document.getElementById('deepgram-toggle');
   const content = document.querySelector('.deepgram-content');
   const saveKeyBtn = document.getElementById('save-deepgram-key');
   const apiKeyInput = document.getElementById('deepgram-api-key');
   const testBtn = document.getElementById('test-deepgram-btn');
   const keyStatus = document.getElementById('key-status');
+  const clearKeyBtn = document.createElement('button');
+
+  // 初始化加密管理器
+  const crypto = window.cryptoManager;
+  await crypto.initialize();
 
   // 可折疊區域
   if (toggleBtn) {
@@ -331,63 +336,130 @@ function initDeepgramUI() {
     });
   }
 
-  // 載入已儲存的 API Key
-  chrome.storage.local.get(['deepgramApiKey'], (result) => {
-    if (result.deepgramApiKey) {
-      apiKeyInput.value = result.deepgramApiKey;
-      keyStatus.textContent = '✅ API Key 已設定';
+  // 載入已儲存的 API Key（加密版本）
+  try {
+    const apiKey = await crypto.getApiKey();
+
+    if (apiKey) {
+      // 顯示遮罩版本
+      apiKeyInput.value = crypto.maskApiKey(apiKey);
+      apiKeyInput.setAttribute('data-masked', 'true');
+      apiKeyInput.type = 'text';
+
+      keyStatus.textContent = '✅ API Key 已設定（🔒加密）';
       keyStatus.style.color = '#28a745';
       testBtn.disabled = false;
+
+      // 添加清除按鈕
+      clearKeyBtn.textContent = '🗑️ 清除';
+      clearKeyBtn.className = 'small-btn';
+      clearKeyBtn.style.marginLeft = '5px';
+      saveKeyBtn.parentElement.appendChild(clearKeyBtn);
+    }
+  } catch (error) {
+    console.error('[Popup] 載入 API Key 失敗:', error);
+  }
+
+  // 輸入框獲得焦點時清除遮罩
+  apiKeyInput.addEventListener('focus', () => {
+    if (apiKeyInput.getAttribute('data-masked') === 'true') {
+      apiKeyInput.value = '';
+      apiKeyInput.type = 'password';
+      apiKeyInput.removeAttribute('data-masked');
+      apiKeyInput.placeholder = '輸入新的 API Key 或留空保留現有';
     }
   });
 
-  // 儲存 API Key
-  if (saveKeyBtn) {
-    saveKeyBtn.addEventListener('click', async () => {
-      const apiKey = apiKeyInput.value.trim();
+  // 儲存 API Key（加密）
+  saveKeyBtn.addEventListener('click', async () => {
+    const apiKey = apiKeyInput.value.trim();
 
-      if (!apiKey) {
-        alert('請輸入 API Key');
-        return;
-      }
+    if (!apiKey) {
+      alert('請輸入 API Key');
+      return;
+    }
 
-      // 儲存到 storage
-      await chrome.storage.local.set({ deepgramApiKey: apiKey });
+    // 驗證格式
+    if (!crypto.validateApiKeyFormat(apiKey)) {
+      alert('API Key 格式無效，請檢查');
+      return;
+    }
 
-      keyStatus.textContent = '✅ API Key 已儲存';
+    try {
+      saveKeyBtn.disabled = true;
+      saveKeyBtn.textContent = '💾 儲存中...';
+
+      // 使用加密管理器儲存
+      await crypto.saveApiKey(apiKey);
+
+      // 更新 UI
+      apiKeyInput.value = crypto.maskApiKey(apiKey);
+      apiKeyInput.setAttribute('data-masked', 'true');
+      apiKeyInput.type = 'text';
+
+      keyStatus.textContent = '✅ API Key 已加密儲存';
       keyStatus.style.color = '#28a745';
       testBtn.disabled = false;
 
-      // 通知 background script
-      chrome.runtime.sendMessage({
-        action: 'updateDeepgramKey',
-        apiKey: apiKey
-      });
+      // 添加清除按鈕
+      if (!clearKeyBtn.parentElement) {
+        saveKeyBtn.parentElement.appendChild(clearKeyBtn);
+      }
 
-      alert('API Key 已儲存成功！');
-    });
-  }
+      chrome.runtime.sendMessage({ action: 'updateDeepgramKey' });
+
+      alert('API Key 已加密儲存！\n\n🔒 使用 AES-GCM-256 加密');
+
+    } catch (error) {
+      alert(`儲存失敗：${error.message}`);
+    } finally {
+      saveKeyBtn.disabled = false;
+      saveKeyBtn.textContent = '💾 儲存';
+    }
+  });
+
+  // 清除 API Key
+  clearKeyBtn.addEventListener('click', async () => {
+    if (!confirm('確定要清除 API Key 嗎？')) {
+      return;
+    }
+
+    try {
+      await crypto.clearApiKey();
+
+      apiKeyInput.value = '';
+      apiKeyInput.type = 'password';
+      apiKeyInput.placeholder = '輸入 Deepgram API Key';
+      apiKeyInput.removeAttribute('data-masked');
+
+      keyStatus.textContent = '未設定 API Key';
+      keyStatus.style.color = '#666';
+      testBtn.disabled = true;
+
+      clearKeyBtn.remove();
+      alert('API Key 已清除');
+    } catch (error) {
+      alert(`清除失敗：${error.message}`);
+    }
+  });
 
   // 測試連接
-  if (testBtn) {
-    testBtn.addEventListener('click', async () => {
-      const apiKey = apiKeyInput.value.trim();
+  testBtn.addEventListener('click', async () => {
+    try {
+      const apiKey = await crypto.getApiKey();
 
       if (!apiKey) {
-        alert('請先輸入 API Key');
+        alert('請先儲存 API Key');
         return;
       }
 
-      // 顯示測試中
       testBtn.disabled = true;
       testBtn.textContent = '🔄 測試中...';
       keyStatus.textContent = '測試連接中...';
       keyStatus.style.color = '#ffc107';
 
-      // 請求 background script 測試
       chrome.runtime.sendMessage({
-        action: 'testDeepgramConnection',
-        apiKey: apiKey
+        action: 'testDeepgramConnection'
       }, (response) => {
         testBtn.disabled = false;
         testBtn.textContent = '🧪 測試 Deepgram 連接';
@@ -395,23 +467,26 @@ function initDeepgramUI() {
         if (response && response.success) {
           keyStatus.textContent = '✅ 連接成功！';
           keyStatus.style.color = '#28a745';
-          alert('Deepgram 連接測試成功！');
+          alert('Deepgram 連接測試成功！✅');
         } else {
           keyStatus.textContent = '❌ 連接失敗';
           keyStatus.style.color = '#dc3545';
           alert(`連接失敗：${response?.error || '未知錯誤'}`);
         }
       });
-    });
-  }
+    } catch (error) {
+      testBtn.disabled = false;
+      testBtn.textContent = '🧪 測試 Deepgram 連接';
+      alert(`測試失敗：${error.message}`);
+    }
+  });
 
   // 監聽輸入變化
-  if (apiKeyInput) {
-    apiKeyInput.addEventListener('input', () => {
-      const hasValue = apiKeyInput.value.trim().length > 0;
-      testBtn.disabled = !hasValue;
-    });
-  }
+  apiKeyInput.addEventListener('input', () => {
+    const hasValue = apiKeyInput.value.trim().length > 0;
+    const isMasked = apiKeyInput.getAttribute('data-masked') === 'true';
+    testBtn.disabled = !(hasValue || isMasked);
+  });
 }
 
 // 在 init 函數中添加
