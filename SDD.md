@@ -1288,6 +1288,260 @@ Patch: 錯誤修復
 - Chrome 會自動檢查更新（每 5 小時）
 - 可以手動觸發: `chrome.runtime.requestUpdateCheck()`
 
+#### 11.3.3 Commit 訊息格式規範
+
+本專案遵循 **Conventional Commits** 規範，確保 commit 歷史清晰易讀。
+
+**基本格式**:
+```
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+**Type（類型）**:
+
+| Type | 說明 | 範例 |
+|------|------|------|
+| **feat** | 新增功能 | `feat(subtitle): 新增智能斷句功能` |
+| **fix** | 錯誤修復 | `fix(heartbeat): 修復心跳檢測超時問題` |
+| **docs** | 文檔更新 | `docs(sdd): 更新系統架構圖` |
+| **style** | 程式碼格式（不影響邏輯） | `style(content): 統一縮排格式` |
+| **refactor** | 重構（不新增功能也不修復錯誤） | `refactor(buffer): 簡化緩衝區管理邏輯` |
+| **perf** | 性能優化 | `perf(render): 優化字幕渲染性能` |
+| **test** | 測試相關 | `test(unit): 新增字幕處理單元測試` |
+| **build** | 建置系統或外部依賴 | `build(deps): 更新 Jest 到 v29.7` |
+| **ci** | CI 配置檔案和腳本 | `ci(github): 新增自動測試 workflow` |
+| **chore** | 其他雜項 | `chore(gitignore): 忽略 coverage 目錄` |
+
+**Scope（範圍）**:
+
+常用的 scope 包括：
+- `subtitle` - 字幕處理邏輯
+- `speech` - 語音辨識
+- `heartbeat` - 心跳檢測
+- `buffer` - 緩衝區管理
+- `ui` - 使用者介面
+- `popup` - Popup 彈窗
+- `content` - Content Script
+- `worker` - Service Worker
+- `offscreen` - Offscreen Document
+- `config` - 配置相關
+- `api` - API 相關
+
+**Subject（主旨）**:
+- 使用繁體中文或英文
+- 簡潔明瞭（建議 50 字以內）
+- 使用祈使句（如：新增、修復、更新）
+- 結尾不加句號
+
+**Body（內文）**:（選填）
+- 詳細說明改動的原因和內容
+- 可以分多行
+- 說明「為什麼」而不只是「做什麼」
+
+**Footer（頁腳）**:（選填）
+- 關聯 Issue：`Closes #123`
+- 破壞性變更：`BREAKING CHANGE: 說明`
+
+**完整範例**:
+
+```
+feat(subtitle): 實作 Interim 主導架構
+
+改用 Interim 結果作為主要顯示來源，解決 Final 結果延遲 2-3 秒的問題。
+
+變更內容：
+- Interim 結果立即顯示（限制 35 字）
+- Final 結果僅用於長期保存
+- 總字數限制 50 字（動態分配）
+
+效能提升：字幕延遲從 2-3 秒降低到 0.2 秒以內
+
+Closes #42
+```
+
+**錯誤示範**:
+```
+❌ 修改了一些東西
+❌ update
+❌ fix bug
+❌ 新增功能（太模糊）
+```
+
+**正確示範**:
+```
+✅ feat(subtitle): 新增智能斷句功能
+✅ fix(heartbeat): 修復 6 秒超時誤判問題
+✅ perf(render): 使用 DocumentFragment 優化 DOM 更新
+✅ docs(readme): 新增快速開始指南
+```
+
+#### 11.3.4 分支命名規範
+
+為確保分支管理清晰，本專案採用統一的分支命名規範。
+
+**格式**:
+```
+<prefix>/<short-description>-<session-id>
+```
+
+**Prefix（前綴）**:
+
+| Prefix | 用途 | 範例 |
+|--------|------|------|
+| **feat** | 功能開發分支 | `feat/interim-engine-abc123` |
+| **fix** | 錯誤修復分支 | `fix/buffer-freeze-def456` |
+| **refactor** | 重構分支 | `refactor/message-system-ghi789` |
+| **perf** | 性能優化分支 | `perf/render-optimization-jkl012` |
+| **docs** | 文檔分支 | `docs/api-documentation-mno345` |
+| **test** | 測試分支 | `test/unit-coverage-pqr678` |
+| **release** | 發布分支 | `release/v1.0.0-stu901` |
+| **hotfix** | 緊急修復分支 | `hotfix/critical-crash-vwx234` |
+
+**Short Description（簡短描述）**:
+- 使用英文，全小寫
+- 單詞間用連字符 `-` 連接
+- 簡潔明瞭（2-4 個單詞）
+- 描述分支主要目的
+
+**Session ID**:
+- Claude Code 自動生成的唯一識別碼
+- **必須保持不變**（用於權限控制）
+- 格式：一串隨機字串（例如：`01FPubgvGt79o7MfWbjQuxNk`）
+
+**分支命名範例**:
+
+```
+✅ feat/web-speech-api-01GXd6k5i1J8Ei4vKaATJ6YE
+✅ fix/subtitle-freezing-015YM8sVPEGvjWpKa4iEEE1d
+✅ perf/heartbeat-timeout-01RUHWyAVU9uG3UWWHVzcdKx
+✅ docs/software-design-01FPubgvGt79o7MfWbjQuxNk
+✅ refactor/buffer-management-01Jz5QCAxUGZLpx1m1mLAQuc
+✅ test/bdd-framework-01GX7TfFGvr4SdTis9LxLxRW
+```
+
+**錯誤命名範例**:
+
+```
+❌ claude/review-subtitle-fix-xxx  // 語意不清
+❌ use-web-speech-api-xxx          // 缺少前綴
+❌ fix/修復字幕-xxx                 // 使用中文
+❌ feat/AddNewFeature-xxx          // 使用駝峰式
+❌ subtitle-api-discussion-xxx     // 語意模糊
+```
+
+### 11.4 分支管理策略
+
+#### 11.4.1 主要分支
+
+**Main/Master 分支**:
+- 始終保持可部署狀態
+- 只接受經過測試的合併
+- 受保護，不允許直接推送
+
+**開發分支（Dev）**:（選填）
+- 整合各個功能分支
+- 持續整合測試
+- 定期合併到 Main
+
+#### 11.4.2 功能分支工作流程
+
+```mermaid
+graph LR
+    A[Main] --> B[feat/new-feature]
+    B --> C[開發]
+    C --> D[測試]
+    D --> E{通過?}
+    E -->|是| F[合併到 Main]
+    E -->|否| C
+    F --> A
+```
+
+**步驟**:
+
+1. **建立分支**:
+   ```bash
+   git checkout -b feat/interim-engine-<session-id>
+   ```
+
+2. **開發與提交**:
+   ```bash
+   git add .
+   git commit -m "feat(subtitle): 實作 Interim 主導架構"
+   ```
+
+3. **定期推送**:
+   ```bash
+   git push -u origin feat/interim-engine-<session-id>
+   ```
+
+4. **建立 Pull Request**:
+   - 填寫清楚的 PR 描述
+   - 關聯相關 Issue
+   - 請求 Code Review
+
+5. **合併後清理**:
+   ```bash
+   git branch -d feat/interim-engine-<session-id>
+   git push origin --delete feat/interim-engine-<session-id>
+   ```
+
+#### 11.4.3 分支生命週期
+
+| 階段 | 動作 | 說明 |
+|------|------|------|
+| **建立** | `git checkout -b` | 從 Main 建立新分支 |
+| **開發** | 多次 commit | 遵循 Commit 規範 |
+| **推送** | `git push` | 定期推送到遠端 |
+| **審查** | Pull Request | Code Review |
+| **合併** | Merge/Squash | 合併到 Main |
+| **清理** | Delete Branch | 刪除已合併分支 |
+
+#### 11.4.4 分支保護規則
+
+建議在 GitHub 設定以下保護規則：
+
+**Main 分支**:
+- ✅ 要求 Pull Request 審查
+- ✅ 要求狀態檢查通過（CI/CD）
+- ✅ 禁止直接推送
+- ✅ 禁止強制推送
+- ✅ 要求線性歷史（可選）
+
+**長期功能分支**:
+- ✅ 要求至少一次審查
+- ✅ 允許刪除已合併分支
+
+#### 11.4.5 分支重命名指南
+
+當需要重命名分支時：
+
+**在 GitHub 上**:
+1. 前往分支列表
+2. 點擊分支旁的編輯圖標
+3. 輸入新名稱（**保持 session-id 不變**）
+4. 儲存
+
+**在本地**:
+```bash
+# 重命名本地分支
+git branch -m old-name new-name
+
+# 刪除遠端舊分支
+git push origin --delete old-name
+
+# 推送新分支
+git push -u origin new-name
+```
+
+**重要提醒**:
+- ⚠️ Session ID 必須完全保持不變
+- ⚠️ 重命名後需要更新所有開啟的 Pull Request
+- ⚠️ 通知團隊成員更新本地分支
+
 ---
 
 ## 12. 測試策略
