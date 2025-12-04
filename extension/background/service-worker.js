@@ -3,10 +3,10 @@
 
 console.log('[Background] Service worker 已載入');
 
-// 動態導入模組（路徑相對於 manifest.json）
+// 動態導入模組（路徑相對於 service-worker.js 所在目錄）
 importScripts(
-  'utils/crypto-manager.js',
-  'background/deepgram-client.js'
+  '../utils/crypto-manager.js',      // 回到上層目錄，再進入 utils/
+  './deepgram-client.js'             // 同目錄下的 deepgram-client.js
 );
 
 console.log('[Background] Deepgram 模組已載入');
