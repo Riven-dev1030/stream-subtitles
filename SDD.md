@@ -1,10 +1,11 @@
 # Stream-Subtitles 軟體設計文件 (Software Design Document)
 
-**版本**: 1.0
-**文件建立日期**: 2025-12-04
+**版本**: 2.0
+**文件建立日期**: 2025-11-21
 **最後更新**: 2025-12-04
 **作者**: Claude AI Assistant
 **專案狀態**: 開發中
+**重大更新**: Phase 2 - Deepgram 雙引擎整合 (2025-12-04)
 
 ---
 
@@ -43,13 +44,24 @@
 
 ### 1.3 主要特性
 
-✅ **零外部依賴**: 使用瀏覽器內建的 Web Speech API，無需第三方 API 金鑰
+#### 基礎功能
+✅ **雙引擎架構** (NEW): 支援 Web Speech API 與 Deepgram 雙語音辨識引擎
+✅ **引擎自由切換**: 使用者可隨時切換辨識引擎，無需重啟
+✅ **零外部依賴 (Web Speech API)**: 使用瀏覽器內建 API，免費無需 API 金鑰
+✅ **高精度選項 (Deepgram)**: 專業級語音辨識，適合追求高準確度的場景
 ✅ **Manifest V3 相容**: 完全遵循 Chrome Extension Manifest V3 規範
+
+#### 字幕處理
 ✅ **智能字幕處理**: Interim 主導架構，解決 Final 結果延遲問題
 ✅ **自動斷句**: 智能識別語句邊界，提供流暢的閱讀體驗
 ✅ **心跳檢測**: 自動監控 Speech API 狀態，異常時自動重啟
 ✅ **字數限制**: 動態字數管理，防止字幕過度累積
 ✅ **關鍵字學習**: （選配）支援自定義關鍵字優化辨識準確度
+
+#### 安全性
+✅ **API Key 加密** (NEW): AES-GCM-256 加密儲存 Deepgram API Key
+✅ **Extension ID 唯一密鑰** (NEW): 每個 Extension 實例使用唯一加密密鑰
+✅ **PBKDF2 密鑰派生** (NEW): 100,000 次迭代，高安全性密鑰派生
 
 ### 1.4 使用場景
 
@@ -63,70 +75,124 @@
 
 ## 2. 系統架構
 
-### 2.1 整體架構圖
+### 2.1 整體架構圖（雙引擎架構）
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Chrome Browser                            │
-│                                                               │
-│  ┌─────────────┐      ┌──────────────┐     ┌─────────────┐ │
-│  │   Popup UI  │◄────►│Service Worker│◄───►│Content Script│ │
-│  │  (控制面板)  │      │ (背景服務)    │     │ (字幕顯示)   │ │
-│  └─────────────┘      └──────────────┘     └─────────────┘ │
-│         ▲                     ▲                     ▲        │
-│         │                     │                     │        │
-│         │                     ▼                     │        │
-│         │            ┌──────────────┐              │        │
-│         └───────────►│ Offscreen    │              │        │
-│                      │ Document     │              │        │
-│                      │ (音訊捕獲)   │              │        │
-│                      └──────────────┘              │        │
-│                             ▲                       │        │
-│                             │                       │        │
-│                             ▼                       ▼        │
-│                    ┌──────────────┐      ┌──────────────┐  │
-│                    │Web Speech API│      │  Target Page │  │
-│                    │ (語音辨識)    │      │  (目標網頁)   │  │
-│                    └──────────────┘      └──────────────┘  │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                           Chrome Browser                              │
+│                                                                        │
+│  ┌────────────┐        ┌─────────────────────┐      ┌──────────────┐│
+│  │  Popup UI  │◄──────►│   Service Worker    │◄────►│Content Script││
+│  │  (控制面板) │        │   (背景服務)         │      │  (字幕顯示)   ││
+│  │            │        │                     │      │              ││
+│  │ ┌────────┐ │        │ ┌─────────────────┐ │      │              ││
+│  │ │引擎選擇 │ │        │ │ CryptoManager   │ │      │              ││
+│  │ │• Web   │ │        │ │  API Key 加密   │ │      │              ││
+│  │ │  Speech│ │        │ └─────────────────┘ │      │              ││
+│  │ │• Deepgram│       │                     │      │              ││
+│  │ └────────┘ │        │ ┌─────────────────┐ │      │              ││
+│  └────────────┘        │ │AudioCaptureManager│     │              ││
+│         │              │ │  Tab 音訊捕獲   │ │      │              ││
+│         │              │ │  格式轉換       │ │      │              ││
+│         │              │ └────────┬────────┘ │      │              ││
+│         ▼              │          │          │      │              ││
+│                        │ ┌────────▼────────┐ │      │              ││
+│    【引擎路由】         │ │ DeepgramClient  │ │      │              ││
+│         │              │ │  WebSocket 串流 │ │      │              ││
+│         │              │ │  結果處理       │ │      │              ││
+│     ┌───┴───┐          │ └────────┬────────┘ │      │              ││
+│     │       │          └──────────┼──────────┘      │              ││
+│     ▼       ▼                     │                 ▼              ││
+│  ┌────┐  ┌──────┐                │        ┌──────────────┐       ││
+│  │Web │  │Deepgram│              │        │ Target Page  │       ││
+│  │Speech│ │      │                ▼        └──────────────┘       ││
+│  │API │  │ ┌──────────────────────┐                              ││
+│  │    │  │ │  Deepgram Cloud API  │                              ││
+│  │    │  │ │  wss://api.deepgram  │                              ││
+│  └────┘  │ │  .com/v1/listen      │                              ││
+│          │ └──────────────────────┘                              ││
+│          └─────────────────────────                               ││
+└──────────────────────────────────────────────────────────────────────┘
+
+【引擎流程】
+┌──────────────────────┐         ┌─────────────────────┐
+│  Web Speech API 模式  │         │   Deepgram 模式      │
+├──────────────────────┤         ├─────────────────────┤
+│ 1. Content Script    │         │ 1. Service Worker   │
+│    啟動語音辨識       │         │    捕獲 Tab 音訊     │
+│ 2. 使用瀏覽器內建     │         │ 2. 格式轉換         │
+│    SpeechRecognition │         │    (Float32→Int16)  │
+│ 3. 直接顯示字幕       │         │ 3. WebSocket 串流   │
+│                      │         │    到 Deepgram      │
+│                      │         │ 4. 接收辨識結果     │
+│                      │         │ 5. 轉發至 Content   │
+│                      │         │    Script 顯示      │
+└──────────────────────┘         └─────────────────────┘
 ```
 
 ### 2.2 核心元件說明
 
-#### 2.2.1 Service Worker（背景服務）
+#### 2.2.1 Service Worker（背景服務）**(已增強)**
 - **角色**: Extension 的中央控制器
 - **功能**:
   - 管理 Extension 生命週期
   - 處理 Runtime Messages（元件間通訊）
-  - 管理 Offscreen Document 的建立與銷毀
+  - **管理 Deepgram WebSocket 連接** (NEW)
+  - **協調音訊捕獲與串流** (NEW)
+  - **加密管理器初始化** (NEW)
   - 監聽 Tab 狀態變化
   - 儲存與管理使用者設定
 
-#### 2.2.2 Popup UI（控制面板）
+#### 2.2.2 Popup UI（控制面板）**(已增強)**
 - **角色**: 使用者操作介面
 - **功能**:
+  - **引擎選擇 UI（Web Speech API / Deepgram）** (NEW)
+  - **Deepgram API Key 設定與管理** (NEW)
+  - **引擎狀態顯示** (NEW)
   - 啟動/停止字幕功能
-  - 設定字幕樣式（大小、顏色、位置）
+  - 語言選擇
   - 顯示執行狀態
-  - 設定進階選項（關鍵字、語言等）
+  - 修正記錄管理
 
-#### 2.2.3 Content Script（字幕顯示層）
+#### 2.2.3 Content Script（字幕顯示層）**(已增強)**
 - **角色**: 頁面注入腳本，負責字幕 UI 渲染
 - **功能**:
   - 建立字幕容器 DOM
-  - 接收並顯示字幕文字
+  - **統一處理雙引擎辨識結果** (NEW)
+  - **Web Speech API 本地辨識** (既有)
+  - **接收 Deepgram 遠端辨識結果** (NEW)
   - 處理字幕動畫與過渡效果
   - 管理字幕生命週期（新增、更新、清除）
   - 響應使用者設定變更
 
-#### 2.2.4 Offscreen Document（音訊處理層）
-- **角色**: 音訊捕獲與語音辨識引擎
+#### 2.2.4 CryptoManager（加密管理器）**(NEW)**
+- **角色**: API Key 安全儲存管理
 - **功能**:
-  - 捕獲 Tab 音訊流
-  - 初始化 Web Speech API
-  - 處理語音辨識結果（Interim + Final）
-  - 傳送辨識結果到 Content Script
-  - 實作心跳檢測機制
+  - AES-GCM-256 加密/解密
+  - Extension ID 唯一密鑰派生（PBKDF2）
+  - API Key 安全儲存至 chrome.storage.local
+  - API Key 格式驗證
+  - 自動加密遷移（明文→密文）
+
+#### 2.2.5 AudioCaptureManager（音訊捕獲管理器）**(NEW)**
+- **角色**: Tab 音訊捕獲與格式轉換
+- **功能**:
+  - 使用 chrome.tabCapture API 捕獲 Tab 音訊
+  - 創建 AudioContext 處理音訊流
+  - 音訊格式轉換（Float32 → Int16 Linear PCM）
+  - 採樣率轉換（原始 → 16kHz）
+  - ScriptProcessorNode 即時處理
+  - 音訊數據回調機制
+
+#### 2.2.6 DeepgramClient（Deepgram 客戶端）**(NEW)**
+- **角色**: Deepgram WebSocket 連接管理
+- **功能**:
+  - WebSocket 連接建立與管理
+  - 音訊串流到 Deepgram API
+  - 接收並解析辨識結果（Interim + Final）
+  - API Key 驗證
+  - 錯誤處理與自動重連
+  - 連接狀態管理
 
 ---
 
@@ -137,7 +203,11 @@
 | 技術 | 版本 | 用途 |
 |------|------|------|
 | **Chrome Extension API** | Manifest V3 | Extension 框架 |
-| **Web Speech API** | - | 語音辨識引擎 |
+| **Web Speech API** | - | 語音辨識引擎（瀏覽器內建）|
+| **Deepgram API** **(NEW)** | v1 | 專業語音辨識引擎（雲端）|
+| **Web Crypto API** **(NEW)** | - | API Key 加密儲存 |
+| **Web Audio API** **(NEW)** | - | 音訊處理與格式轉換 |
+| **WebSocket** **(NEW)** | - | Deepgram 即時通訊 |
 | **JavaScript (ES6+)** | - | 主要開發語言 |
 | **HTML5** | - | UI 結構 |
 | **CSS3** | - | 樣式設計 |
@@ -158,16 +228,18 @@ chrome.tabs.sendMessage()
 // Storage API - 資料儲存
 chrome.storage.local.get()
 chrome.storage.local.set()
+chrome.storage.sync.get()
+chrome.storage.sync.set()
 
-// Offscreen API - Offscreen Document
-chrome.offscreen.createDocument()
-chrome.offscreen.closeDocument()
+// TabCapture API - Tab 音訊捕獲 (NEW)
+chrome.tabCapture.capture()
+chrome.tabCapture.getCapturedTabs()
 ```
 
 #### 3.2.2 Web Speech API
 
 ```javascript
-// SpeechRecognition
+// SpeechRecognition（瀏覽器內建）
 const recognition = new webkitSpeechRecognition();
 recognition.continuous = true;
 recognition.interimResults = true;
@@ -175,6 +247,71 @@ recognition.lang = 'zh-TW';
 
 recognition.onresult = (event) => {
   // 處理辨識結果
+};
+```
+
+#### 3.2.3 Deepgram API **(NEW)**
+
+```javascript
+// WebSocket 連接到 Deepgram
+const ws = new WebSocket(
+  `wss://api.deepgram.com/v1/listen?` +
+  `encoding=linear16&` +
+  `sample_rate=16000&` +
+  `language=zh-TW&` +
+  `punctuate=true&` +
+  `interim_results=true`,
+  ['token', apiKey]
+);
+
+// 發送音訊數據
+ws.send(audioData);
+
+// 接收辨識結果
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  const transcript = data.channel.alternatives[0].transcript;
+  const isFinal = data.is_final;
+};
+```
+
+#### 3.2.4 Web Crypto API **(NEW)**
+
+```javascript
+// AES-GCM-256 加密
+const encrypted = await crypto.subtle.encrypt(
+  { name: 'AES-GCM', iv: iv },
+  cryptoKey,
+  data
+);
+
+// PBKDF2 密鑰派生
+const derivedKey = await crypto.subtle.deriveKey(
+  {
+    name: 'PBKDF2',
+    salt: salt,
+    iterations: 100000,
+    hash: 'SHA-256'
+  },
+  keyMaterial,
+  { name: 'AES-GCM', length: 256 },
+  false,
+  ['encrypt', 'decrypt']
+);
+```
+
+#### 3.2.5 Web Audio API **(NEW)**
+
+```javascript
+// 音訊處理
+const audioContext = new AudioContext({ sampleRate: 16000 });
+const source = audioContext.createMediaStreamSource(mediaStream);
+const processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+processor.onaudioprocess = (event) => {
+  const audioData = event.inputBuffer.getChannelData(0);
+  // 轉換為 Int16
+  const int16Data = floatTo16BitPCM(audioData);
 };
 ```
 
@@ -840,33 +977,48 @@ function cleanupOldSubtitles() {
 
 ### 8.1 權限管理
 
-#### 8.1.1 必要權限
+#### 8.1.1 必要權限 **(已更新)**
 
 ```json
 {
   "permissions": [
-    "tabCapture",      // 捕獲 Tab 音訊
-    "offscreen",       // 使用 Offscreen Document
-    "storage",         // 儲存設定
-    "activeTab"        // 存取當前 Tab
+    "tabCapture",      // Tab 音訊捕獲（Deepgram 模式）
+    "storage",         // 儲存設定與加密 API Key
+    "activeTab",       // 存取當前 Tab
+    "scripting"        // Content Script 注入
+  ],
+  "host_permissions": [
+    "<all_urls>"       // 允許在所有頁面運行
   ]
 }
 ```
 
 #### 8.1.2 權限最小化原則
 
-- ❌ 不要求 `<all_urls>` 權限
 - ✅ 僅在使用者點擊時才執行
-- ✅ 不收集或傳送使用者資料
+- ✅ **API Key 加密儲存**（AES-GCM-256）
+- ✅ **Web Speech API 模式**：完全本地處理，無外部連接
+- ⚠️  **Deepgram 模式**：音訊串流至 Deepgram API（需用戶明確同意）
 
-### 8.2 資料隱私
+### 8.2 資料隱私 **(已更新)**
 
 #### 8.2.1 隱私保護措施
 
-- ✅ **本地處理**: 所有語音辨識在瀏覽器內完成
+**Web Speech API 模式**：
+- ✅ **完全本地處理**: 所有語音辨識在瀏覽器內完成
 - ✅ **不傳送資料**: 不將音訊或字幕傳送到外部伺服器
+- ✅ **零追蹤**: 不收集任何使用者資料
+
+**Deepgram 模式** **(NEW)**：
+- ⚠️  **音訊串流**: 音訊資料串流至 Deepgram 雲端 API
+- ✅ **API Key 加密**: 使用 AES-GCM-256 加密儲存
+- ✅ **Extension ID 唯一密鑰**: 每個安裝實例使用不同加密密鑰
+- ✅ **用戶知情同意**: UI 明確標示使用外部 API
+
+**通用措施**：
 - ✅ **不記錄歷史**: 不儲存字幕歷史記錄
 - ✅ **即時清理**: 字幕僅保存在記憶體中，關閉後清除
+- ✅ **敏感資料保護**: API Key 加密後儲存，不明文傳輸
 
 #### 8.2.2 使用者資料處理
 
@@ -892,9 +1044,94 @@ function saveSettings(settings) {
 }
 ```
 
-### 8.3 注入安全
+### 8.3 API Key 加密安全 **(NEW)**
 
-#### 8.3.1 Content Script 安全
+#### 8.3.1 加密架構
+
+```
+┌──────────────────────────────────────────┐
+│         API Key 加密流程                  │
+├──────────────────────────────────────────┤
+│ 1. 用戶輸入 Deepgram API Key (明文)       │
+│            ↓                              │
+│ 2. Extension ID → PBKDF2 → 加密密鑰      │
+│            ↓                              │
+│ 3. AES-GCM-256 加密                       │
+│            ↓                              │
+│ 4. 儲存至 chrome.storage.local (密文)    │
+│            ↓                              │
+│ 5. 使用時自動解密                         │
+└──────────────────────────────────────────┘
+```
+
+#### 8.3.2 加密實作細節
+
+**密鑰派生**（Extension ID-based）：
+```javascript
+class CryptoManager {
+  async _deriveKey() {
+    const extensionId = chrome.runtime.id;
+    const salt = encoder.encode(`stream-subtitles-${extensionId}-v1`);
+
+    // PBKDF2 with 100,000 iterations
+    this.cryptoKey = await crypto.subtle.deriveKey(
+      {
+        name: 'PBKDF2',
+        salt: salt,
+        iterations: 100000,
+        hash: 'SHA-256'
+      },
+      keyMaterial,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+  }
+}
+```
+
+**加密儲存**：
+```javascript
+async encrypt(apiKey) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(apiKey);
+
+  // 生成隨機 IV (12 bytes)
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+
+  // AES-GCM-256 加密
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: iv },
+    this.cryptoKey,
+    data
+  );
+
+  // IV + 密文 組合，轉為 Base64
+  return base64Encode(iv + encrypted);
+}
+```
+
+#### 8.3.3 安全特性
+
+| 特性 | 實作方式 | 安全等級 |
+|------|---------|---------|
+| **加密算法** | AES-GCM-256 | 軍規級 |
+| **密鑰派生** | PBKDF2, 100,000 iterations | 高 |
+| **唯一密鑰** | Extension ID-based | 高 |
+| **IV 隨機性** | crypto.getRandomValues | 高 |
+| **認證加密** | GCM mode（AEAD） | 高 |
+
+#### 8.3.4 攻擊防護
+
+- ✅ **防止明文洩漏**: API Key 永不以明文形式儲存
+- ✅ **防止重放攻擊**: 每次加密使用隨機 IV
+- ✅ **防止篡改**: GCM mode 提供完整性驗證
+- ✅ **隔離性**: 每個 Extension 實例使用唯一密鑰
+- ⚠️  **本地攻擊**: 如果攻擊者有完整的 Extension 存取權限，可解密
+
+### 8.4 注入安全
+
+#### 8.4.1 Content Script 安全
 
 ```javascript
 // 使用 Shadow DOM 隔離樣式
@@ -1805,7 +2042,15 @@ describe('E2E: Subtitle Display', () => {
 
 | 版本 | 日期 | 變更內容 | 作者 |
 |------|------|---------|------|
-| 1.0 | 2025-12-04 | 初始版本建立 | Claude AI |
+| 2.0 | 2025-12-04 | **Phase 2 更新**：Deepgram 雙引擎整合 | Claude AI |
+|     |            | • 新增 Deepgram WebSocket 客戶端 | |
+|     |            | • 新增 AudioCaptureManager 音訊捕獲模組 | |
+|     |            | • 新增 CryptoManager API Key 加密管理 | |
+|     |            | • 新增引擎切換 UI（Web Speech API / Deepgram）| |
+|     |            | • 更新系統架構圖為雙引擎架構 | |
+|     |            | • 新增 tabCapture 權限 | |
+|     |            | • 新增安全性章節（API Key 加密）| |
+| 1.0 | 2025-11-21 | 初始版本建立（Web Speech API 單引擎）| Claude AI |
 
 ### 14.5 貢獻者
 
