@@ -6,10 +6,11 @@ console.log('[Background] Service worker 已載入');
 // 動態導入模組（路徑相對於 service-worker.js 所在目錄）
 importScripts(
   '../utils/crypto-manager.js',      // 回到上層目錄，再進入 utils/
-  './deepgram-client.js'             // 同目錄下的 deepgram-client.js
+  './deepgram-client.js',            // 同目錄下的 deepgram-client.js
+  './audio-capture-manager.js'       // 音訊捕獲管理器
 );
 
-console.log('[Background] Deepgram 模組已載入');
+console.log('[Background] Deepgram 與音訊捕獲模組已載入');
 
 // 擴充功能安裝或更新時
 chrome.runtime.onInstalled.addListener((details) => {
@@ -37,7 +38,9 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 let deepgramClient = null;
 let cryptoManager = null;
+let audioCaptureManager = null;
 let isDeepgramActive = false;
+let currentTabId = null;
 
 // 初始化加密管理器
 async function initCryptoManager() {
@@ -79,6 +82,16 @@ async function handleMessage(message, sender, sendResponse) {
       case 'updateDeepgramKey':
         // API Key 已更新，清除當前客戶端
         handleUpdateDeepgramKey(sendResponse);
+        break;
+
+      case 'startDeepgramRecognition':
+        // 開始 Deepgram 語音辨識
+        await handleStartDeepgramRecognition(message.tabId, message.language, sendResponse);
+        break;
+
+      case 'stopDeepgramRecognition':
+        // 停止 Deepgram 語音辨識
+        await handleStopDeepgramRecognition(sendResponse);
         break;
 
       case 'getStatus':
@@ -166,14 +179,153 @@ function handleUpdateDeepgramKey(sendResponse) {
 }
 
 // ============================================
-// Deepgram 啟動邏輯 (MVP - 待實作)
+// Deepgram 語音辨識 - 開始
 // ============================================
 
-// TODO: 實作完整的 Deepgram 音訊捕獲與串流
-// 這部分需要更複雜的實作，包括：
-// 1. 使用 chrome.tabCapture 捕獲音訊
-// 2. 處理音訊格式轉換
-// 3. 串流到 Deepgram WebSocket
-// 4. 接收結果並發送到 Content Script
+async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', sendResponse) {
+  try {
+    console.log(`[Background] 開始 Deepgram 語音辨識，Tab: ${tabId}, 語言: ${language}`);
 
-console.log('[Background] Service Worker 初始化完成（Deepgram MVP）');
+    // 如果已經在運行，先停止
+    if (isDeepgramActive) {
+      console.warn('[Background] Deepgram 已在運行，先停止...');
+      await handleStopDeepgramRecognition(() => {});
+    }
+
+    // 1. 初始化加密管理器並取得 API Key
+    const crypto = await initCryptoManager();
+    const apiKey = await crypto.getApiKey();
+
+    if (!apiKey) {
+      throw new Error('未設定 Deepgram API Key');
+    }
+
+    // 2. 初始化 AudioCaptureManager
+    if (!audioCaptureManager) {
+      audioCaptureManager = new AudioCaptureManager();
+    }
+
+    // 3. 初始化 DeepgramClient
+    if (!deepgramClient) {
+      deepgramClient = new DeepgramClient(apiKey);
+    }
+
+    // 4. 設定 Deepgram 結果回調
+    deepgramClient.onResult = (result) => {
+      console.log('[Background] Deepgram 結果:', result.isFinal ? 'Final' : 'Interim', result.text);
+
+      // 轉發結果到 Content Script
+      chrome.tabs.sendMessage(tabId, {
+        action: 'deepgramResult',
+        result: {
+          text: result.text,
+          isFinal: result.isFinal,
+          confidence: result.confidence,
+          timestamp: result.timestamp
+        }
+      }).catch(err => {
+        console.error('[Background] 轉發結果到 Content Script 失敗:', err);
+      });
+    };
+
+    // 5. 設定 Deepgram 錯誤回調
+    deepgramClient.onError = (error) => {
+      console.error('[Background] Deepgram 錯誤:', error);
+
+      // 通知 Content Script 發生錯誤
+      chrome.tabs.sendMessage(tabId, {
+        action: 'deepgramError',
+        error: error.message || 'Deepgram 連接錯誤'
+      }).catch(err => {
+        console.error('[Background] 轉發錯誤到 Content Script 失敗:', err);
+      });
+
+      // 停止辨識
+      handleStopDeepgramRecognition(() => {});
+    };
+
+    // 6. 連接到 Deepgram
+    await deepgramClient.connect(language);
+    console.log('[Background] Deepgram WebSocket 已連接');
+
+    // 7. 設定音訊數據回調（將音訊串流到 Deepgram）
+    audioCaptureManager.setAudioDataCallback((audioData) => {
+      if (deepgramClient && deepgramClient.isConnected) {
+        deepgramClient.sendAudio(audioData.buffer);
+      }
+    });
+
+    // 8. 開始捕獲音訊
+    await audioCaptureManager.startCapture(tabId);
+    console.log('[Background] 音訊捕獲已啟動');
+
+    // 9. 更新狀態
+    isDeepgramActive = true;
+    currentTabId = tabId;
+
+    sendResponse({
+      success: true,
+      message: 'Deepgram 語音辨識已啟動'
+    });
+  } catch (error) {
+    console.error('[Background] 啟動 Deepgram 失敗:', error);
+
+    // 清理資源
+    await cleanupDeepgramResources();
+
+    sendResponse({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+// ============================================
+// Deepgram 語音辨識 - 停止
+// ============================================
+
+async function handleStopDeepgramRecognition(sendResponse) {
+  try {
+    console.log('[Background] 停止 Deepgram 語音辨識');
+
+    await cleanupDeepgramResources();
+
+    sendResponse({
+      success: true,
+      message: 'Deepgram 語音辨識已停止'
+    });
+  } catch (error) {
+    console.error('[Background] 停止 Deepgram 失敗:', error);
+
+    sendResponse({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+// ============================================
+// Deepgram 資源清理
+// ============================================
+
+async function cleanupDeepgramResources() {
+  console.log('[Background] 清理 Deepgram 資源');
+
+  // 停止音訊捕獲
+  if (audioCaptureManager) {
+    await audioCaptureManager.stopCapture();
+  }
+
+  // 斷開 Deepgram 連接
+  if (deepgramClient) {
+    deepgramClient.disconnect();
+  }
+
+  // 重置狀態
+  isDeepgramActive = false;
+  currentTabId = null;
+
+  console.log('[Background] Deepgram 資源已清理');
+}
+
+console.log('[Background] Service Worker 初始化完成（Deepgram Phase 2）');

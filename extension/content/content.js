@@ -92,6 +92,19 @@ function init() {
         });
         break;
 
+      case 'deepgramResult':
+        // 處理來自 Deepgram 的辨識結果
+        handleDeepgramResult(message.result);
+        sendResponse({ success: true });
+        break;
+
+      case 'deepgramError':
+        // 處理來自 Deepgram 的錯誤
+        console.error('[Content] Deepgram 錯誤:', message.error);
+        displayError(message.error);
+        sendResponse({ success: true });
+        break;
+
       default:
         sendResponse({ success: false, error: 'Unknown action' });
     }
@@ -945,6 +958,59 @@ function stopHeartbeat() {
     heartbeatTimer = null;
   }
 }
+
+// ============================================
+// Deepgram 結果處理
+// ============================================
+
+/**
+ * 處理來自 Deepgram 的辨識結果
+ * @param {Object} result - Deepgram 結果
+ * @param {string} result.text - 辨識文字
+ * @param {boolean} result.isFinal - 是否為最終結果
+ * @param {number} result.confidence - 信心度
+ * @param {number} result.timestamp - 時間戳
+ */
+function handleDeepgramResult(result) {
+  try {
+    console.log('[Content] Deepgram 結果:', result.text, result.isFinal ? '(final)' : '(interim)', 'confidence:', result.confidence);
+
+    // 更新最後收到結果的時間
+    lastResultTimestamp = Date.now();
+
+    // 顯示字幕（使用現有的 displaySubtitle 函數）
+    displaySubtitle(result.text, result.isFinal);
+
+    // 確保字幕 UI 可見
+    if (!isVisible) {
+      showSubtitleUI();
+    }
+  } catch (error) {
+    console.error('[Content] 處理 Deepgram 結果失敗:', error);
+  }
+}
+
+/**
+ * 顯示錯誤訊息
+ * @param {string} errorMessage - 錯誤訊息
+ */
+function displayError(errorMessage) {
+  // 在字幕區域顯示錯誤訊息
+  if (subtitleText) {
+    subtitleText.innerHTML = `<span style="color: #ff4444;">❌ 錯誤: ${errorMessage}</span>`;
+  }
+
+  // 3 秒後清除錯誤訊息
+  setTimeout(() => {
+    if (subtitleText) {
+      subtitleText.innerHTML = '';
+    }
+  }, 3000);
+}
+
+// ============================================
+// 初始化
+// ============================================
 
 // 初始化
 if (document.readyState === 'loading') {
