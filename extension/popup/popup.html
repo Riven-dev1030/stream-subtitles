@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stream Subtitles</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- 標題 -->
+    <div class="header">
+      <h1>🎬 Stream Subtitles</h1>
+      <p class="subtitle">即時字幕產生器</p>
+    </div>
+
+    <!-- 狀態顯示 -->
+    <div class="status-section">
+      <div class="status-indicator" id="status-indicator">
+        <span class="status-dot"></span>
+        <span id="status-text">未啟動</span>
+      </div>
+    </div>
+
+    <!-- 語言選擇 -->
+    <div class="language-section">
+      <h3>選擇語言</h3>
+      <div class="language-buttons">
+        <button class="lang-btn active" data-lang="en">
+          <span class="flag">🇬🇧</span>
+          <span class="lang-name">English</span>
+        </button>
+        <button class="lang-btn" data-lang="ja">
+          <span class="flag">🇯🇵</span>
+          <span class="lang-name">日本語</span>
+        </button>
+        <button class="lang-btn" data-lang="zh-TW">
+          <span class="flag">🇹🇼</span>
+          <span class="lang-name">繁體中文</span>
+        </button>
+        <button class="lang-btn auto-btn" data-lang="auto">
+          <span class="flag">🌐</span>
+          <span class="lang-name">自動偵測</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 引擎選擇 -->
+    <div class="engine-section">
+      <h3>選擇辨識引擎</h3>
+      <div class="engine-buttons">
+        <button class="engine-btn active" data-engine="webspeech">
+          <span class="engine-icon">🎙️</span>
+          <span class="engine-name">Web Speech API</span>
+          <span class="engine-desc">免費，瀏覽器內建</span>
+        </button>
+        <button class="engine-btn" data-engine="deepgram" id="deepgram-engine-btn">
+          <span class="engine-icon">⚡</span>
+          <span class="engine-name">Deepgram</span>
+          <span class="engine-desc">更高精度（需 API Key）</span>
+        </button>
+      </div>
+      <p class="small" style="margin-top: 5px; color: #666;">
+        <span id="engine-status">目前使用：Web Speech API</span>
+      </p>
+    </div>
+
+    <!-- 控制按鈕 -->
+    <div class="control-section">
+      <button id="start-btn" class="primary-btn">
+        <span class="btn-icon">▶️</span>
+        <span class="btn-text">開始錄音</span>
+      </button>
+      <button id="stop-btn" class="secondary-btn" disabled>
+        <span class="btn-icon">⏹️</span>
+        <span class="btn-text">停止錄音</span>
+      </button>
+    </div>
+
+    <!-- 修正歷史和 Keywords -->
+    <div class="corrections-section">
+      <h3>📚 學習記錄</h3>
+      <div id="corrections-list" class="corrections-list">
+        <div class="empty-state">
+          <p>還沒有修正記錄</p>
+          <p class="small">點擊字幕旁的 ✏️ 按鈕來修正錯誤</p>
+        </div>
+      </div>
+      <div class="corrections-actions">
+        <button id="clear-corrections-btn" class="small-btn">🗑️ 清除全部</button>
+      </div>
+    </div>
+
+    <!-- 快捷鍵提示 -->
+    <div class="shortcuts-section collapsed">
+      <h3 class="collapsible-header">⌨️ 鍵盤快捷鍵 <span class="toggle-icon">▼</span></h3>
+      <div class="shortcut-list">
+        <div class="shortcut-item">
+          <kbd>Alt + 1</kbd>
+          <span>切換到英文</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Alt + 2</kbd>
+          <span>切換到日文</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Alt + 3</kbd>
+          <span>切換到中文</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Alt + 4</kbd>
+          <span>自動偵測</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Alt + S</kbd>
+          <span>開始/停止</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 語音引擎資訊 -->
+    <div class="api-section">
+      <h3>🎤 語音引擎</h3>
+
+      <!-- Web Speech API (當前) -->
+      <div class="api-status">
+        <div class="api-info-box">
+          <span class="info-icon">✅</span>
+          <div class="info-content">
+            <p class="info-title">使用 Web Speech API</p>
+            <p class="small info-description">
+              瀏覽器內建，免費使用，無需 API Key
+            </p>
+          </div>
+        </div>
+        <div class="note-box">
+          <p class="small note-text">
+            ℹ️ <strong>使用說明：</strong><br>
+            1. 首次使用請允許麥克風權限<br>
+            2. 如使用 VB-Cable 可直接辨識分頁音訊<br>
+            3. 或開啟喇叭讓麥克風捕捉聲音
+          </p>
+        </div>
+      </div>
+
+      <!-- Deepgram 設定 (實驗性) -->
+      <div class="deepgram-section" style="margin-top: 15px;">
+        <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;" id="deepgram-toggle">
+          <h4 style="margin: 0;">⚡ Deepgram (實驗性 MVP)</h4>
+          <span class="toggle-icon">▼</span>
+        </div>
+
+        <div class="deepgram-content" style="display: none; margin-top: 10px;">
+          <div class="deepgram-info-box" style="background: #fff3cd; padding: 10px; border-radius: 4px; margin-bottom: 10px;">
+            <p class="small" style="margin: 0;">
+              🚧 <strong>MVP 測試版本</strong><br>
+              更高的辨識精度，但需要 API Key
+            </p>
+          </div>
+
+          <!-- API Key 輸入 -->
+          <div class="api-key-input-group">
+            <label for="deepgram-api-key" style="display: block; margin-bottom: 5px; font-weight: bold; font-size: 12px;">
+              API Key:
+            </label>
+            <div style="display: flex; gap: 5px;">
+              <input
+                type="password"
+                id="deepgram-api-key"
+                placeholder="輸入 Deepgram API Key"
+                style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;"
+              >
+              <button id="save-deepgram-key" class="small-btn" style="padding: 8px 12px;">
+                💾 儲存
+              </button>
+            </div>
+            <p class="small" style="margin: 5px 0 0 0; color: #666;">
+              <span id="key-status">未設定 API Key</span>
+            </p>
+          </div>
+
+          <!-- 測試按鈕 -->
+          <div style="margin-top: 10px;">
+            <button id="test-deepgram-btn" class="secondary-btn" style="width: 100%; font-size: 12px;" disabled>
+              🧪 測試 Deepgram 連接
+            </button>
+          </div>
+
+          <!-- 使用說明 -->
+          <div class="note-box" style="margin-top: 10px;">
+            <p class="small" style="margin: 0;">
+              📖 <strong>如何取得 API Key：</strong><br>
+              1. 前往 <a href="https://console.deepgram.com/signup" target="_blank">Deepgram 註冊</a><br>
+              2. 免費額度：200 美金 / 46,000 分鐘<br>
+              3. 複製 API Key 並貼上
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 版本資訊 -->
+    <div class="footer">
+      <p>Version 2.0.0 - Web Speech API</p>
+      <p class="small">支援英文、日文、繁體中文</p>
+    </div>
+  </div>
+
+  <script src="../utils/crypto-manager.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
