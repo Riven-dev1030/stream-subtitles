@@ -6,11 +6,10 @@ console.log('[Background] Service worker 已載入');
 // 動態導入模組（路徑相對於 service-worker.js 所在目錄）
 importScripts(
   '../utils/crypto-manager.js',      // 回到上層目錄，再進入 utils/
-  './deepgram-client.js',            // 同目錄下的 deepgram-client.js
-  './audio-capture-manager.js'       // 音訊捕獲管理器
+  './deepgram-client.js'             // 同目錄下的 deepgram-client.js
 );
 
-console.log('[Background] Deepgram 與音訊捕獲模組已載入');
+console.log('[Background] Deepgram 模組已載入（使用 Offscreen Document 處理音訊）');
 
 // 擴充功能安裝或更新時
 chrome.runtime.onInstalled.addListener((details) => {
@@ -38,9 +37,9 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 let deepgramClient = null;
 let cryptoManager = null;
-let audioCaptureManager = null;
 let isDeepgramActive = false;
 let currentTabId = null;
+let offscreenDocumentCreated = false;
 
 // 初始化加密管理器
 async function initCryptoManager() {
@@ -50,6 +49,68 @@ async function initCryptoManager() {
     console.log('[Background] CryptoManager 已初始化');
   }
   return cryptoManager;
+}
+
+// ============================================
+// Offscreen Document 管理
+// ============================================
+
+/**
+ * 創建 Offscreen Document
+ */
+async function createOffscreenDocument() {
+  // 檢查是否已經存在
+  const existingContexts = await chrome.runtime.getContexts({
+    contextTypes: ['OFFSCREEN_DOCUMENT']
+  });
+
+  if (existingContexts.length > 0) {
+    console.log('[Background] Offscreen Document 已存在');
+    offscreenDocumentCreated = true;
+    return;
+  }
+
+  // 創建新的 Offscreen Document
+  await chrome.offscreen.createDocument({
+    url: chrome.runtime.getURL('offscreen/offscreen.html'),
+    reasons: ['USER_MEDIA'], // 用於音訊捕獲
+    justification: 'Capture tab audio for speech recognition with Deepgram'
+  });
+
+  offscreenDocumentCreated = true;
+  console.log('[Background] Offscreen Document 已創建');
+}
+
+/**
+ * 關閉 Offscreen Document
+ */
+async function closeOffscreenDocument() {
+  if (!offscreenDocumentCreated) {
+    return;
+  }
+
+  try {
+    await chrome.offscreen.closeDocument();
+    offscreenDocumentCreated = false;
+    console.log('[Background] Offscreen Document 已關閉');
+  } catch (error) {
+    console.error('[Background] 關閉 Offscreen Document 失敗:', error);
+  }
+}
+
+/**
+ * 處理來自 Offscreen Document 的音訊數據
+ */
+function handleAudioData(audioDataArray) {
+  if (!deepgramClient || !deepgramClient.isConnected) {
+    return;
+  }
+
+  // 將陣列轉換回 Int16Array
+  const int16Data = new Int16Array(audioDataArray);
+
+  // 發送到 Deepgram
+  deepgramClient.sendAudio(int16Data.buffer);
 }
 
 // ============================================
@@ -92,6 +153,24 @@ async function handleMessage(message, sender, sendResponse) {
       case 'stopDeepgramRecognition':
         // 停止 Deepgram 語音辨識
         await handleStopDeepgramRecognition(sendResponse);
+        break;
+
+      case 'audioData':
+        // 來自 Offscreen Document 的音訊數據
+        handleAudioData(message.data);
+        sendResponse({ success: true });
+        break;
+
+      case 'audioCaptureStarted':
+        // Offscreen Document 音訊捕獲已啟動
+        console.log('[Background] Offscreen Document 音訊捕獲已啟動');
+        sendResponse({ success: true });
+        break;
+
+      case 'audioCaptureStopped':
+        // Offscreen Document 音訊捕獲已停止
+        console.log('[Background] Offscreen Document 音訊捕獲已停止');
+        sendResponse({ success: true });
         break;
 
       case 'getStatus':
@@ -200,17 +279,12 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', sendRes
       throw new Error('未設定 Deepgram API Key');
     }
 
-    // 2. 初始化 AudioCaptureManager
-    if (!audioCaptureManager) {
-      audioCaptureManager = new AudioCaptureManager();
-    }
-
-    // 3. 初始化 DeepgramClient
+    // 2. 初始化 DeepgramClient
     if (!deepgramClient) {
-      deepgramClient = new DeepgramClient(apiKey);
+      deepgramClient = new DeepgramClient(apiKey, { language });
     }
 
-    // 4. 設定 Deepgram 結果回調
+    // 3. 設定 Deepgram 結果回調
     deepgramClient.onResult = (result) => {
       console.log('[Background] Deepgram 結果:', result.isFinal ? 'Final' : 'Interim', result.text);
 
@@ -228,7 +302,7 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', sendRes
       });
     };
 
-    // 5. 設定 Deepgram 錯誤回調
+    // 4. 設定 Deepgram 錯誤回調
     deepgramClient.onError = (error) => {
       console.error('[Background] Deepgram 錯誤:', error);
 
@@ -244,20 +318,27 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', sendRes
       handleStopDeepgramRecognition(() => {});
     };
 
-    // 6. 連接到 Deepgram
-    await deepgramClient.connect(language);
+    // 5. 連接到 Deepgram
+    await deepgramClient.connect();
     console.log('[Background] Deepgram WebSocket 已連接');
 
-    // 7. 設定音訊數據回調（將音訊串流到 Deepgram）
-    audioCaptureManager.setAudioDataCallback((audioData) => {
-      if (deepgramClient && deepgramClient.isConnected) {
-        deepgramClient.sendAudio(audioData.buffer);
-      }
+    // 6. 創建 Offscreen Document
+    await createOffscreenDocument();
+
+    // 7. 取得 Tab 的 MediaStream ID
+    const streamId = await chrome.tabCapture.getMediaStreamId({
+      targetTabId: tabId
     });
 
-    // 8. 開始捕獲音訊
-    await audioCaptureManager.startCapture(tabId);
-    console.log('[Background] 音訊捕獲已啟動');
+    console.log('[Background] 已取得 streamId:', streamId);
+
+    // 8. 通知 Offscreen Document 開始音訊捕獲
+    await chrome.runtime.sendMessage({
+      action: 'startAudioCapture',
+      streamId: streamId
+    });
+
+    console.log('[Background] 已通知 Offscreen Document 開始音訊捕獲');
 
     // 9. 更新狀態
     isDeepgramActive = true;
@@ -311,15 +392,24 @@ async function handleStopDeepgramRecognition(sendResponse) {
 async function cleanupDeepgramResources() {
   console.log('[Background] 清理 Deepgram 資源');
 
-  // 停止音訊捕獲
-  if (audioCaptureManager) {
-    await audioCaptureManager.stopCapture();
+  // 通知 Offscreen Document 停止音訊捕獲
+  if (offscreenDocumentCreated) {
+    try {
+      await chrome.runtime.sendMessage({
+        action: 'stopAudioCapture'
+      });
+    } catch (error) {
+      console.error('[Background] 通知 Offscreen 停止失敗:', error);
+    }
   }
 
   // 斷開 Deepgram 連接
   if (deepgramClient) {
     deepgramClient.disconnect();
   }
+
+  // 關閉 Offscreen Document
+  await closeOffscreenDocument();
 
   // 重置狀態
   isDeepgramActive = false;
