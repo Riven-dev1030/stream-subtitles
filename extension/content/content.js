@@ -239,6 +239,25 @@ function startRecording(language = 'en', autoDetectMode = false) {
 function stopRecording(skipSessionReset = false) {
   console.log('[Content] 停止語音辨識');
 
+  // **關鍵修復：檢查是否正在使用 Deepgram，需要通知 Service Worker 停止**
+  // 判斷方式：如果沒有 recognition 對象但 isRecording 為 true，表示正在使用 Deepgram
+  const isUsingDeepgram = isRecording && !recognition;
+
+  if (isUsingDeepgram) {
+    console.log('[Content] 正在使用 Deepgram，發送停止請求到 Service Worker');
+    // 通知 Service Worker 停止 Deepgram
+    chrome.runtime.sendMessage({
+      action: 'stopDeepgramRecognition'
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error('[Content] 停止 Deepgram 失敗:', chrome.runtime.lastError);
+      } else {
+        console.log('[Content] Deepgram 已停止');
+      }
+    });
+  }
+
+  // 停止 Web Speech API（如果正在使用）
   if (recognition) {
     try {
       recognition.stop();

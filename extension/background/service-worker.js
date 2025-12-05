@@ -500,36 +500,46 @@ async function handleStopDeepgramRecognition(sendResponse) {
 // ============================================
 
 async function cleanupDeepgramResources() {
-  console.log('[Background] 清理 Deepgram 資源');
+  console.log('[Background] 🧹 開始清理 Deepgram 資源...');
 
-  // 斷開 Deepgram 連接（先斷開，避免繼續接收數據）
+  // 1. 斷開 Deepgram WebSocket 連接（先斷開，避免繼續接收數據）
   if (deepgramClient) {
     try {
+      console.log('[Background] 📡 關閉 Deepgram WebSocket 連接...');
       deepgramClient.disconnect();
       deepgramClient = null;
+      console.log('[Background] ✅ Deepgram WebSocket 已關閉');
     } catch (error) {
-      console.error('[Background] 斷開 Deepgram 連接失敗:', error);
+      console.error('[Background] ❌ 斷開 Deepgram 連接失敗:', error);
     }
+  } else {
+    console.log('[Background] ℹ️ 無需關閉 Deepgram（客戶端不存在）');
   }
 
-  // 通知 Offscreen Document 停止音訊捕獲
+  // 2. 通知 Offscreen Document 停止音訊捕獲
   if (offscreenDocumentCreated) {
     try {
+      console.log('[Background] 🎤 通知 Offscreen Document 停止音訊捕獲...');
       await chrome.runtime.sendMessage({
         action: 'stopAudioCapture'
       });
+      console.log('[Background] ✅ Offscreen Document 音訊捕獲已停止');
     } catch (error) {
-      console.error('[Background] 通知 Offscreen 停止失敗:', error);
+      console.error('[Background] ❌ 通知 Offscreen 停止失敗:', error);
     }
+  } else {
+    console.log('[Background] ℹ️ 無需停止音訊捕獲（Offscreen Document 未創建）');
   }
 
-  // 關閉 Offscreen Document
+  // 3. 關閉 Offscreen Document
+  console.log('[Background] 🗑️ 關閉 Offscreen Document...');
   await closeOffscreenDocument();
+  console.log('[Background] ✅ Offscreen Document 已關閉');
 
   // 注意：不再在這裡重置 isDeepgramActive 和 currentTabId
   // 這些狀態應該由調用者在清理前就設置好，以確保狀態立即更新
 
-  console.log('[Background] Deepgram 資源已清理');
+  console.log('[Background] ✅ Deepgram 資源清理完成');
 }
 
 console.log('[Background] Service Worker 初始化完成（Deepgram Phase 2）');
@@ -562,10 +572,11 @@ chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
  * 當用戶刷新正在錄音的 Tab 時，自動停止 Deepgram 並清理資源
  */
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  // 只處理導航開始的情況（刷新或切換 URL）
-  if (changeInfo.status === 'loading' && changeInfo.url) {
+  // **關鍵修復：處理頁面刷新（loading）或導航（url 改變）**
+  // 刷新時 changeInfo.url 可能不存在，但 status 會變成 'loading'
+  if (changeInfo.status === 'loading') {
     if (isDeepgramActive && tabId === currentTabId) {
-      console.log(`[Background] Tab ${tabId} 正在刷新/導航，自動停止 Deepgram`);
+      console.log(`[Background] Tab ${tabId} 正在刷新/導航（status: loading），自動停止 Deepgram`);
 
       // 立即重置狀態
       isDeepgramActive = false;

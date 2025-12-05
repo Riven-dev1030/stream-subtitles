@@ -93,43 +93,60 @@ async function handleStartAudioCapture(streamId) {
  * 停止音訊捕獲
  */
 async function handleStopAudioCapture() {
-  console.log('[Offscreen] 停止音訊捕獲');
+  console.log('[Offscreen] 🛑 停止音訊捕獲...');
 
   isCapturing = false;
 
-  // 停止音訊播放
+  // 1. 停止音訊播放
   if (audioElement) {
+    console.log('[Offscreen] 🔇 停止音訊播放...');
     audioElement.srcObject = null;
     audioElement = null;
+    console.log('[Offscreen] ✅ 音訊播放已停止');
   }
 
-  // 停止 Worklet 節點
+  // 2. 停止 AudioWorklet 節點
   if (workletNode) {
-    // 通知 worklet 停止處理
-    workletNode.port.postMessage({ command: 'stop' });
-    workletNode.disconnect();
-    workletNode = null;
+    console.log('[Offscreen] 🎛️ 停止 AudioWorklet 節點...');
+    try {
+      // 通知 worklet 停止處理
+      workletNode.port.postMessage({ command: 'stop' });
+      workletNode.disconnect();
+      workletNode = null;
+      console.log('[Offscreen] ✅ AudioWorklet 節點已停止');
+    } catch (error) {
+      console.error('[Offscreen] ❌ 停止 AudioWorklet 失敗:', error);
+    }
   }
 
-  // 停止源節點
+  // 3. 停止源節點
   if (sourceNode) {
+    console.log('[Offscreen] 🎵 斷開音訊源節點...');
     sourceNode.disconnect();
     sourceNode = null;
+    console.log('[Offscreen] ✅ 音訊源節點已斷開');
   }
 
-  // 關閉 AudioContext
+  // 4. 關閉 AudioContext
   if (audioContext && audioContext.state !== 'closed') {
+    console.log('[Offscreen] 🔊 關閉 AudioContext...');
     await audioContext.close();
     audioContext = null;
+    console.log('[Offscreen] ✅ AudioContext 已關閉');
   }
 
-  // 停止 MediaStream
+  // 5. 停止 MediaStream
   if (mediaStream) {
-    mediaStream.getTracks().forEach(track => track.stop());
+    console.log('[Offscreen] 📹 停止 MediaStream 軌道...');
+    mediaStream.getTracks().forEach(track => {
+      console.log(`[Offscreen]   - 停止軌道: ${track.kind} (${track.label})`);
+      track.stop();
+    });
     mediaStream = null;
+    console.log('[Offscreen] ✅ MediaStream 已停止');
   }
 
-  console.log('[Offscreen] 音訊捕獲已停止');
+  console.log('[Offscreen] ✅ 音訊捕獲完全停止');
 
   // 通知 Service Worker 停止成功
   chrome.runtime.sendMessage({
