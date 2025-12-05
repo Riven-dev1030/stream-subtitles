@@ -176,10 +176,11 @@ async function handleMessage(message, sender, sendResponse) {
       case 'getStatus':
         // 取得狀態
         sendResponse({
-          isRecording: false,
-          currentLanguage: 'en',
+          isRecording: isDeepgramActive, // Deepgram 運行狀態
+          currentLanguage: 'zh-TW',
           autoDetect: false,
-          isDeepgramActive: isDeepgramActive
+          isDeepgramActive: isDeepgramActive,
+          currentEngine: isDeepgramActive ? 'deepgram' : 'webspeech'
         });
         break;
 

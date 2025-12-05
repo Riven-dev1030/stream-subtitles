@@ -40,7 +40,15 @@ async function init() {
 
   // 初始化 Deepgram UI
   await initDeepgramUI();
+
+  // 開始狀態輪詢
+  startStatusPolling();
 }
+
+// 當 popup 關閉時清理資源
+window.addEventListener('unload', () => {
+  stopStatusPolling();
+});
 
 // 載入狀態
 function loadStatus() {
@@ -50,6 +58,11 @@ function loadStatus() {
       isRecording = response.isRecording;
       currentLanguage = response.currentLanguage;
       autoDetect = response.autoDetect;
+
+      // 同步引擎狀態
+      if (response.currentEngine) {
+        currentEngine = response.currentEngine;
+      }
 
       // 更新 UI
       updateUI();
@@ -66,6 +79,44 @@ function loadStatus() {
     }
     updateUI();
   });
+}
+
+// 定期更新狀態（每秒檢查一次）
+let statusUpdateInterval = null;
+
+function startStatusPolling() {
+  // 清除舊的定時器
+  if (statusUpdateInterval) {
+    clearInterval(statusUpdateInterval);
+  }
+
+  // 每秒更新一次狀態
+  statusUpdateInterval = setInterval(() => {
+    chrome.runtime.sendMessage({ action: 'getStatus' }, (response) => {
+      if (response) {
+        const oldIsRecording = isRecording;
+        isRecording = response.isRecording;
+
+        // 同步引擎狀態
+        if (response.currentEngine) {
+          currentEngine = response.currentEngine;
+        }
+
+        // 只在狀態改變時更新 UI
+        if (oldIsRecording !== isRecording) {
+          console.log('[Popup] 狀態改變:', isRecording ? '錄音中' : '已停止');
+          updateUI();
+        }
+      }
+    });
+  }, 1000);
+}
+
+function stopStatusPolling() {
+  if (statusUpdateInterval) {
+    clearInterval(statusUpdateInterval);
+    statusUpdateInterval = null;
+  }
 }
 
 // 綁定事件
