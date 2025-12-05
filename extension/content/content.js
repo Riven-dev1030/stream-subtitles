@@ -110,9 +110,24 @@ function init() {
         sendResponse({ success: true });
         break;
 
+      case 'deepgramStarted':
+        // Deepgram 已啟動，更新狀態
+        console.log('[Content] Deepgram 已啟動');
+        isRecording = true;
+        if (controlPanel) {
+          updateControlPanel();
+        }
+        showSubtitleUI();
+        sendResponse({ success: true });
+        break;
+
       case 'deepgramStopped':
-        // Deepgram 已停止，隱藏字幕 UI
+        // Deepgram 已停止，更新狀態並隱藏字幕 UI
         console.log('[Content] Deepgram 已停止');
+        isRecording = false;
+        if (controlPanel) {
+          updateControlPanel();
+        }
         hideSubtitleUI();
         sendResponse({ success: true });
         break;

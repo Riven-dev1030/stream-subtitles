@@ -55,6 +55,7 @@ function loadStatus() {
   // 從 background 取得狀態
   chrome.runtime.sendMessage({ action: 'getStatus' }, (response) => {
     if (response) {
+      const oldIsRecording = isRecording;
       isRecording = response.isRecording;
       currentLanguage = response.currentLanguage;
       autoDetect = response.autoDetect;
@@ -63,6 +64,14 @@ function loadStatus() {
       if (response.currentEngine) {
         currentEngine = response.currentEngine;
       }
+
+      // 添加日誌以診斷狀態同步問題
+      console.log('[Popup] loadStatus:', {
+        isRecording: response.isRecording,
+        isDeepgramActive: response.isDeepgramActive,
+        currentEngine: response.currentEngine,
+        changed: oldIsRecording !== isRecording
+      });
 
       // 更新 UI
       updateUI();

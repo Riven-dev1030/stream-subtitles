@@ -177,13 +177,18 @@ async function handleMessage(message, sender, sendResponse) {
         // 取得狀態 - 從 storage 讀取用戶選擇的引擎
         chrome.storage.sync.get(['recognitionEngine'], (result) => {
           const selectedEngine = result.recognitionEngine || 'webspeech';
-          sendResponse({
+          const statusResponse = {
             isRecording: isDeepgramActive, // Deepgram 運行狀態
             currentLanguage: 'zh-TW',
             autoDetect: false,
             isDeepgramActive: isDeepgramActive,
             currentEngine: selectedEngine // 使用用戶選擇的引擎，而不是根據運行狀態判斷
-          });
+          };
+
+          // 添加日誌以診斷狀態同步問題
+          console.log('[Background] getStatus 返回:', statusResponse);
+
+          sendResponse(statusResponse);
         });
         return true; // 保持消息通道開啟以支持異步響應
 
@@ -419,6 +424,15 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', sendRes
     // 9. 更新狀態
     isDeepgramActive = true;
     currentTabId = tabId;
+
+    // **關鍵修復：通知 Content Script Deepgram 已啟動**
+    chrome.tabs.sendMessage(tabId, {
+      action: 'deepgramStarted'
+    }).catch(err => {
+      console.warn('[Background] 通知 Content Script Deepgram 已啟動失敗:', err.message);
+    });
+
+    console.log('[Background] ✅ Deepgram 已完全啟動');
 
     sendResponse({
       success: true,
