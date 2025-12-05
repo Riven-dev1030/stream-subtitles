@@ -675,9 +675,4 @@ async function initDeepgramUI() {
   });
 }
 
-// 在 init 函數中添加
-document.addEventListener('DOMContentLoaded', () => {
-  init();
-  initDeepgramUI();
-});
 console.log('[Popup] Popup script 載入完成');
