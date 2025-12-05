@@ -445,6 +445,22 @@ async function handleStopDeepgramRecognition(sendResponse) {
   try {
     console.log('[Background] 停止 Deepgram 語音辨識');
 
+    // **關鍵修復：立即更新狀態，避免狀態不一致**
+    isDeepgramActive = false;
+    const stoppedTabId = currentTabId;
+    currentTabId = null;
+
+    // 通知頁面 Deepgram 已停止
+    if (stoppedTabId) {
+      chrome.tabs.sendMessage(stoppedTabId, {
+        action: 'deepgramStopped'
+      }).catch(err => {
+        // 忽略錯誤（頁面可能已關閉）
+        console.log('[Background] 通知頁面停止失敗（頁面可能已關閉）:', err.message);
+      });
+    }
+
+    // 清理資源（在狀態更新後執行，避免阻塞）
     await cleanupDeepgramResources();
 
     sendResponse({
@@ -453,6 +469,10 @@ async function handleStopDeepgramRecognition(sendResponse) {
     });
   } catch (error) {
     console.error('[Background] 停止 Deepgram 失敗:', error);
+
+    // 確保狀態被重置，即使清理失敗
+    isDeepgramActive = false;
+    currentTabId = null;
 
     sendResponse({
       success: false,
@@ -468,6 +488,16 @@ async function handleStopDeepgramRecognition(sendResponse) {
 async function cleanupDeepgramResources() {
   console.log('[Background] 清理 Deepgram 資源');
 
+  // 斷開 Deepgram 連接（先斷開，避免繼續接收數據）
+  if (deepgramClient) {
+    try {
+      deepgramClient.disconnect();
+      deepgramClient = null;
+    } catch (error) {
+      console.error('[Background] 斷開 Deepgram 連接失敗:', error);
+    }
+  }
+
   // 通知 Offscreen Document 停止音訊捕獲
   if (offscreenDocumentCreated) {
     try {
@@ -479,19 +509,61 @@ async function cleanupDeepgramResources() {
     }
   }
 
-  // 斷開 Deepgram 連接
-  if (deepgramClient) {
-    deepgramClient.disconnect();
-  }
-
   // 關閉 Offscreen Document
   await closeOffscreenDocument();
 
-  // 重置狀態
-  isDeepgramActive = false;
-  currentTabId = null;
+  // 注意：不再在這裡重置 isDeepgramActive 和 currentTabId
+  // 這些狀態應該由調用者在清理前就設置好，以確保狀態立即更新
 
   console.log('[Background] Deepgram 資源已清理');
 }
 
 console.log('[Background] Service Worker 初始化完成（Deepgram Phase 2）');
+
+// ============================================
+// Tab 生命週期監聽 - 自動清理資源
+// ============================================
+
+/**
+ * 監聽 Tab 移除事件
+ * 當用戶關閉正在錄音的 Tab 時，自動停止 Deepgram 並清理資源
+ */
+chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+  if (isDeepgramActive && tabId === currentTabId) {
+    console.log(`[Background] Tab ${tabId} 已關閉，自動停止 Deepgram`);
+
+    // 立即重置狀態
+    isDeepgramActive = false;
+    currentTabId = null;
+
+    // 清理資源
+    cleanupDeepgramResources().catch(err => {
+      console.error('[Background] 自動清理失敗:', err);
+    });
+  }
+});
+
+/**
+ * 監聽 Tab 更新事件
+ * 當用戶刷新正在錄音的 Tab 時，自動停止 Deepgram 並清理資源
+ */
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  // 只處理導航開始的情況（刷新或切換 URL）
+  if (changeInfo.status === 'loading' && changeInfo.url) {
+    if (isDeepgramActive && tabId === currentTabId) {
+      console.log(`[Background] Tab ${tabId} 正在刷新/導航，自動停止 Deepgram`);
+
+      // 立即重置狀態
+      isDeepgramActive = false;
+      currentTabId = null;
+
+      // 清理資源
+      cleanupDeepgramResources().catch(err => {
+        console.error('[Background] 自動清理失敗:', err);
+      });
+    }
+  }
+});
+
+console.log('[Background] Tab 生命週期監聽器已設置');
+

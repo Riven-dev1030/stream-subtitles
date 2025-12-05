@@ -110,6 +110,13 @@ function init() {
         sendResponse({ success: true });
         break;
 
+      case 'deepgramStopped':
+        // Deepgram 已停止，隱藏字幕 UI
+        console.log('[Content] Deepgram 已停止');
+        hideSubtitleUI();
+        sendResponse({ success: true });
+        break;
+
       default:
         sendResponse({ success: false, error: 'Unknown action' });
     }
