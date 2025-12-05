@@ -69,6 +69,11 @@ function init() {
     console.log('[Content] 收到訊息:', message.action);
 
     switch (message.action) {
+      case 'ping':
+        // 用於檢查 Content Script 是否已就緒
+        sendResponse({ success: true, ready: true });
+        break;
+
       case 'startRecording':
         startRecording(message.language, message.autoDetect);
         sendResponse({ success: true });

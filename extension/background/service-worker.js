@@ -261,6 +261,44 @@ function handleUpdateDeepgramKey(sendResponse) {
 // Deepgram 語音辨識 - 開始
 // ============================================
 
+/**
+ * 確保 Content Script 已注入並就緒
+ */
+async function ensureContentScriptReady(tabId) {
+  try {
+    // 嘗試發送 ping 訊息檢查 Content Script 是否存在
+    const response = await chrome.tabs.sendMessage(tabId, { action: 'ping' });
+    console.log('[Background] Content Script 已就緒');
+    return true;
+  } catch (error) {
+    // Content Script 不存在，需要注入
+    console.log('[Background] Content Script 不存在，開始注入...');
+
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        files: ['content/content.js']
+      });
+
+      // 注入 CSS
+      await chrome.scripting.insertCSS({
+        target: { tabId: tabId },
+        files: ['styles/content.css']
+      });
+
+      console.log('[Background] Content Script 注入成功');
+
+      // 等待一下讓 Content Script 初始化
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      return true;
+    } catch (injectError) {
+      console.error('[Background] 注入 Content Script 失敗:', injectError);
+      throw new Error('無法注入 Content Script，請確認頁面權限');
+    }
+  }
+}
+
 async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', sendResponse) {
   try {
     console.log(`[Background] 開始 Deepgram 語音辨識，Tab: ${tabId}, 語言: ${language}`);
@@ -270,6 +308,9 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', sendRes
       console.warn('[Background] Deepgram 已在運行，先停止...');
       await handleStopDeepgramRecognition(() => {});
     }
+
+    // **關鍵修復：確保 Content Script 已就緒**
+    await ensureContentScriptReady(tabId);
 
     // 1. 初始化加密管理器並取得 API Key
     const crypto = await initCryptoManager();
