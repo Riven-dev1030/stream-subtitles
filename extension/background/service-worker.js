@@ -59,26 +59,33 @@ async function initCryptoManager() {
  * 創建 Offscreen Document
  */
 async function createOffscreenDocument() {
+  console.log('[Background] 🏗️ 準備創建 Offscreen Document...');
+
   // 檢查是否已經存在
   const existingContexts = await chrome.runtime.getContexts({
     contextTypes: ['OFFSCREEN_DOCUMENT']
   });
 
   if (existingContexts.length > 0) {
-    console.log('[Background] Offscreen Document 已存在');
-    offscreenDocumentCreated = true;
-    return;
+    console.log('[Background] ℹ️ Offscreen Document 已存在，先關閉舊的');
+    // 如果已存在，先關閉再重新創建（確保乾淨狀態）
+    await closeOffscreenDocument();
   }
 
   // 創建新的 Offscreen Document
-  await chrome.offscreen.createDocument({
-    url: chrome.runtime.getURL('offscreen/offscreen.html'),
-    reasons: ['USER_MEDIA'], // 用於音訊捕獲
-    justification: 'Capture tab audio for speech recognition with Deepgram'
-  });
+  try {
+    await chrome.offscreen.createDocument({
+      url: chrome.runtime.getURL('offscreen/offscreen.html'),
+      reasons: ['USER_MEDIA'], // 用於音訊捕獲
+      justification: 'Capture tab audio for speech recognition with Deepgram'
+    });
 
-  offscreenDocumentCreated = true;
-  console.log('[Background] Offscreen Document 已創建');
+    offscreenDocumentCreated = true;
+    console.log('[Background] ✅ Offscreen Document 已創建');
+  } catch (error) {
+    console.error('[Background] ❌ 創建 Offscreen Document 失敗:', error);
+    throw error;
+  }
 }
 
 /**
@@ -86,15 +93,22 @@ async function createOffscreenDocument() {
  */
 async function closeOffscreenDocument() {
   if (!offscreenDocumentCreated) {
+    console.log('[Background] ℹ️ Offscreen Document 未創建，無需關閉');
     return;
   }
 
   try {
+    console.log('[Background] 🗑️ 正在關閉 Offscreen Document...');
     await chrome.offscreen.closeDocument();
     offscreenDocumentCreated = false;
-    console.log('[Background] Offscreen Document 已關閉');
+    console.log('[Background] ✅ Offscreen Document 已關閉');
+
+    // **新增：等待一小段時間確保 Offscreen Document 完全關閉**
+    await new Promise(resolve => setTimeout(resolve, 100));
   } catch (error) {
-    console.error('[Background] 關閉 Offscreen Document 失敗:', error);
+    console.error('[Background] ❌ 關閉 Offscreen Document 失敗:', error);
+    // 即使失敗也要重置標誌，避免狀態不一致
+    offscreenDocumentCreated = false;
   }
 }
 
@@ -329,10 +343,15 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', sendRes
   try {
     console.log(`[Background] 開始 Deepgram 語音辨識，Tab: ${tabId}, 語言: ${language}`);
 
-    // 如果已經在運行，先停止
+    // **關鍵修復：如果已在運行，先完全停止並等待清理完成**
     if (isDeepgramActive) {
-      console.warn('[Background] Deepgram 已在運行，先停止...');
+      console.warn('[Background] Deepgram 已在運行，先完全停止...');
       await handleStopDeepgramRecognition(() => {});
+
+      // **新增：等待一小段時間確保所有資源完全釋放**
+      console.log('[Background] 等待資源完全釋放...');
+      await new Promise(resolve => setTimeout(resolve, 500));
+      console.log('[Background] ✅ 資源已釋放，可以重新啟動');
     }
 
     // **關鍵修復：確保 Content Script 已就緒**
@@ -350,9 +369,18 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', sendRes
     console.log('[Background] 初始化 Deepgram Client，語言:', language);
     console.log('[Background] API Key 前綴:', apiKey ? apiKey.substring(0, 10) + '...' : 'null');
 
-    if (!deepgramClient) {
-      deepgramClient = new DeepgramClient(apiKey, { language });
+    // **關鍵修復：總是創建新的 DeepgramClient，確保乾淨狀態**
+    if (deepgramClient) {
+      console.log('[Background] 舊的 Deepgram Client 存在，先清理');
+      try {
+        deepgramClient.disconnect();
+      } catch (error) {
+        console.warn('[Background] 清理舊 Client 失敗:', error);
+      }
     }
+
+    deepgramClient = new DeepgramClient(apiKey, { language });
+    console.log('[Background] ✅ 新的 Deepgram Client 已創建');
 
     // 3. 設定 Deepgram 結果回調
     deepgramClient.onResult = (result) => {

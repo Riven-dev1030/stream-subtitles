@@ -269,12 +269,16 @@ class DeepgramClient {
         console.warn('[Deepgram] 發送關閉信號失敗:', error);
       }
 
-      setTimeout(() => {
-        if (this.ws) {
-          this.ws.close();
-          this.ws = null;
-        }
-      }, 100);
+      // **關鍵修復：立即關閉連接，不使用 setTimeout**
+      // 這樣可以避免重新啟動時的競態條件
+      try {
+        this.ws.close();
+        console.log('[Deepgram] WebSocket 已立即關閉');
+      } catch (error) {
+        console.error('[Deepgram] 關閉 WebSocket 失敗:', error);
+      }
+
+      this.ws = null;
     }
   }
 
