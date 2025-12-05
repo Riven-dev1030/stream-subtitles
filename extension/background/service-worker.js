@@ -174,15 +174,18 @@ async function handleMessage(message, sender, sendResponse) {
         break;
 
       case 'getStatus':
-        // 取得狀態
-        sendResponse({
-          isRecording: isDeepgramActive, // Deepgram 運行狀態
-          currentLanguage: 'zh-TW',
-          autoDetect: false,
-          isDeepgramActive: isDeepgramActive,
-          currentEngine: isDeepgramActive ? 'deepgram' : 'webspeech'
+        // 取得狀態 - 從 storage 讀取用戶選擇的引擎
+        chrome.storage.sync.get(['recognitionEngine'], (result) => {
+          const selectedEngine = result.recognitionEngine || 'webspeech';
+          sendResponse({
+            isRecording: isDeepgramActive, // Deepgram 運行狀態
+            currentLanguage: 'zh-TW',
+            autoDetect: false,
+            isDeepgramActive: isDeepgramActive,
+            currentEngine: selectedEngine // 使用用戶選擇的引擎，而不是根據運行狀態判斷
+          });
         });
-        break;
+        return true; // 保持消息通道開啟以支持異步響應
 
       default:
         sendResponse({ success: true });

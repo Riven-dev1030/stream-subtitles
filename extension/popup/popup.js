@@ -95,6 +95,7 @@ function startStatusPolling() {
     chrome.runtime.sendMessage({ action: 'getStatus' }, (response) => {
       if (response) {
         const oldIsRecording = isRecording;
+        const oldEngine = currentEngine;
         isRecording = response.isRecording;
 
         // 同步引擎狀態
@@ -102,9 +103,12 @@ function startStatusPolling() {
           currentEngine = response.currentEngine;
         }
 
-        // 只在狀態改變時更新 UI
-        if (oldIsRecording !== isRecording) {
-          console.log('[Popup] 狀態改變:', isRecording ? '錄音中' : '已停止');
+        // 在狀態或引擎改變時更新 UI
+        if (oldIsRecording !== isRecording || oldEngine !== currentEngine) {
+          console.log('[Popup] 狀態改變:', {
+            錄音: isRecording ? '錄音中' : '已停止',
+            引擎: currentEngine
+          });
           updateUI();
         }
       }
@@ -463,13 +467,15 @@ function getLanguageName(langCode) {
  * 載入引擎設定
  */
 async function loadEngineSettings() {
-  // 從 storage 載入引擎設定
-  chrome.storage.sync.get(['recognitionEngine'], (result) => {
-    if (result.recognitionEngine) {
-      currentEngine = result.recognitionEngine;
-    }
-    updateUI();
+  // 從 storage 載入引擎設定（使用 Promise 以正確等待）
+  const result = await new Promise((resolve) => {
+    chrome.storage.sync.get(['recognitionEngine'], resolve);
   });
+
+  if (result.recognitionEngine) {
+    currentEngine = result.recognitionEngine;
+    console.log('[Popup] 從 storage 載入引擎:', currentEngine);
+  }
 
   // 檢查是否有 Deepgram API Key
   try {
@@ -490,6 +496,9 @@ async function loadEngineSettings() {
     console.error('[Popup] 檢查 Deepgram API Key 失敗:', error);
     hasDeepgramApiKey = false;
   }
+
+  // 在所有設定載入完成後更新 UI
+  updateUI();
 }
 
 // ============================================
