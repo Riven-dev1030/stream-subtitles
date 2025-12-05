@@ -268,37 +268,54 @@ function handleUpdateDeepgramKey(sendResponse) {
 /**
  * 確保 Content Script 已注入並就緒
  */
-async function ensureContentScriptReady(tabId) {
+async function ensureContentScriptReady(tabId, maxRetries = 5) {
+  // 首先嘗試 ping，檢查 Content Script 是否已存在
   try {
-    // 嘗試發送 ping 訊息檢查 Content Script 是否存在
-    const response = await chrome.tabs.sendMessage(tabId, { action: 'ping' });
+    await chrome.tabs.sendMessage(tabId, { action: 'ping' });
     console.log('[Background] Content Script 已就緒');
     return true;
   } catch (error) {
-    // Content Script 不存在，需要注入
     console.log('[Background] Content Script 不存在，開始注入...');
+  }
 
+  // Content Script 不存在，需要注入
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      files: ['content/content.js']
+    });
+
+    // 注入 CSS
+    await chrome.scripting.insertCSS({
+      target: { tabId: tabId },
+      files: ['styles/content.css']
+    });
+
+    console.log('[Background] Content Script 注入成功');
+  } catch (injectError) {
+    console.error('[Background] 注入 Content Script 失敗:', injectError);
+    throw new Error('無法注入 Content Script，請確認頁面權限');
+  }
+
+  // 注入後，重試 ping 直到成功或達到最大重試次數
+  for (let i = 0; i < maxRetries; i++) {
     try {
-      await chrome.scripting.executeScript({
-        target: { tabId: tabId },
-        files: ['content/content.js']
-      });
+      // 每次重試前等待一段時間（遞增等待時間）
+      const waitTime = 200 * (i + 1); // 200ms, 400ms, 600ms, 800ms, 1000ms
+      await new Promise(resolve => setTimeout(resolve, waitTime));
 
-      // 注入 CSS
-      await chrome.scripting.insertCSS({
-        target: { tabId: tabId },
-        files: ['styles/content.css']
-      });
+      console.log(`[Background] 嘗試 ping Content Script (${i + 1}/${maxRetries})...`);
+      await chrome.tabs.sendMessage(tabId, { action: 'ping' });
 
-      console.log('[Background] Content Script 注入成功');
-
-      // 等待一下讓 Content Script 初始化
-      await new Promise(resolve => setTimeout(resolve, 500));
-
+      console.log('[Background] Content Script 初始化完成');
       return true;
-    } catch (injectError) {
-      console.error('[Background] 注入 Content Script 失敗:', injectError);
-      throw new Error('無法注入 Content Script，請確認頁面權限');
+    } catch (pingError) {
+      console.warn(`[Background] Ping 失敗 (${i + 1}/${maxRetries}):`, pingError.message);
+
+      // 如果是最後一次重試，拋出錯誤
+      if (i === maxRetries - 1) {
+        throw new Error(`Content Script 注入後無法連接（已重試 ${maxRetries} 次）`);
+      }
     }
   }
 }

@@ -238,10 +238,10 @@ function startRecording() {
         if (response && response.success) {
           isRecording = true;
           updateUI();
-          console.log('[Popup] Deepgram 已啟動');
-          alert('✅ Deepgram 辨識已啟動！\n\n字幕將會顯示在頁面上');
+          console.log('[Popup] ✅ Deepgram 已啟動，字幕將會顯示在頁面上');
         } else {
-          alert('❌ 啟動失敗\n\n' + (response.error || '未知錯誤'));
+          console.error('[Popup] ❌ Deepgram 啟動失敗:', response?.error || '未知錯誤');
+          alert('❌ 啟動失敗\n\n' + (response?.error || '未知錯誤'));
         }
       });
     } else {

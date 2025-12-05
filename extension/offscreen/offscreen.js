@@ -9,7 +9,7 @@ console.log('[Offscreen] Offscreen document 已載入');
 
 let audioContext = null;
 let sourceNode = null;
-let processorNode = null;
+let workletNode = null;
 let mediaStream = null;
 let audioElement = null;
 let isCapturing = false;
@@ -103,11 +103,12 @@ async function handleStopAudioCapture() {
     audioElement = null;
   }
 
-  // 停止處理節點
-  if (processorNode) {
-    processorNode.disconnect();
-    processorNode.onaudioprocess = null;
-    processorNode = null;
+  // 停止 Worklet 節點
+  if (workletNode) {
+    // 通知 worklet 停止處理
+    workletNode.port.postMessage({ command: 'stop' });
+    workletNode.disconnect();
+    workletNode = null;
   }
 
   // 停止源節點
@@ -137,67 +138,63 @@ async function handleStopAudioCapture() {
 }
 
 /**
- * 設定音訊處理管道
+ * 設定音訊處理管道（使用 AudioWorkletNode）
  */
 async function setupAudioProcessing(stream) {
   const targetSampleRate = 16000; // Deepgram 要求 16kHz
 
-  // 創建 AudioContext
-  audioContext = new AudioContext({
-    sampleRate: targetSampleRate
-  });
-
-  console.log(`[Offscreen] AudioContext 創建，採樣率: ${audioContext.sampleRate}Hz`);
-
-  // 創建音訊源節點
-  sourceNode = audioContext.createMediaStreamSource(stream);
-
-  // 創建 ScriptProcessorNode
-  // 注意：雖然已棄用，但在 Extension 環境中仍是最穩定的選擇
-  const bufferSize = 4096;
-  processorNode = audioContext.createScriptProcessor(
-    bufferSize,
-    1, // 單聲道
-    1
-  );
-
-  // 音訊處理回調
-  processorNode.onaudioprocess = (event) => {
-    if (!isCapturing) {
-      return;
-    }
-
-    const inputBuffer = event.inputBuffer;
-    const audioData = inputBuffer.getChannelData(0);
-
-    // 轉換為 Int16 Linear PCM
-    const int16Data = floatTo16BitPCM(audioData);
-
-    // 發送音訊數據到 Service Worker
-    chrome.runtime.sendMessage({
-      action: 'audioData',
-      data: Array.from(int16Data) // 轉換為普通陣列以便傳輸
+  try {
+    // 創建 AudioContext
+    audioContext = new AudioContext({
+      sampleRate: targetSampleRate
     });
-  };
 
-  // 連接節點（僅用於數據處理，不輸出到 destination）
-  // 注意：音訊播放由 <audio> 元素處理，這裡只處理數據
-  sourceNode.connect(processorNode);
-  processorNode.connect(audioContext.destination); // 需要連接到 destination 以保持 ScriptProcessorNode 運行
+    console.log(`[Offscreen] AudioContext 創建，採樣率: ${audioContext.sampleRate}Hz`);
 
-  console.log('[Offscreen] 音訊處理管道已建立');
-}
+    // 載入 AudioWorklet 模組
+    const processorUrl = chrome.runtime.getURL('offscreen/audio-processor.js');
+    await audioContext.audioWorklet.addModule(processorUrl);
+    console.log('[Offscreen] AudioWorklet 模組已載入');
 
-/**
- * 將 Float32Array 轉換為 Int16Array (Linear16 PCM)
- */
-function floatTo16BitPCM(float32Array) {
-  const int16Array = new Int16Array(float32Array.length);
-  for (let i = 0; i < float32Array.length; i++) {
-    const s = Math.max(-1, Math.min(1, float32Array[i]));
-    int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    // 創建音訊源節點
+    sourceNode = audioContext.createMediaStreamSource(stream);
+
+    // 創建 AudioWorkletNode
+    workletNode = new AudioWorkletNode(audioContext, 'audio-capture-processor', {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      channelCount: 1 // 單聲道
+    });
+
+    // 監聽來自 Worklet 的音訊數據
+    workletNode.port.onmessage = (event) => {
+      if (event.data.type === 'audioData') {
+        // 接收 transferable object（ArrayBuffer）
+        const int16Data = new Int16Array(event.data.data);
+
+        // 發送音訊數據到 Service Worker
+        chrome.runtime.sendMessage({
+          action: 'audioData',
+          data: Array.from(int16Data) // 轉換為普通陣列以便傳輸
+        }).catch(err => {
+          // 忽略發送失敗（可能是 Service Worker 重啟）
+          if (!err.message.includes('Extension context invalidated')) {
+            console.error('[Offscreen] 發送音訊數據失敗:', err);
+          }
+        });
+      }
+    };
+
+    // 連接節點
+    // 注意：不連接到 destination，音訊播放由 <audio> 元素處理
+    sourceNode.connect(workletNode);
+    // workletNode 不需要連接到 destination，因為只用於數據處理
+
+    console.log('[Offscreen] AudioWorklet 音訊處理管道已建立');
+  } catch (error) {
+    console.error('[Offscreen] 設定音訊處理管道失敗:', error);
+    throw error;
   }
-  return int16Array;
 }
 
 console.log('[Offscreen] 音訊捕獲模組已就緒');
