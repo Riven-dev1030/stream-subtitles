@@ -11,6 +11,7 @@ let audioContext = null;
 let sourceNode = null;
 let processorNode = null;
 let mediaStream = null;
+let audioElement = null;
 let isCapturing = false;
 
 // 監聽來自 Service Worker 的訊息
@@ -60,7 +61,17 @@ async function handleStartAudioCapture(streamId) {
 
     console.log('[Offscreen] MediaStream 已獲取');
 
-    // 設定音訊處理管道
+    // **關鍵修復：將音訊流播放出來，讓用戶能聽到聲音**
+    audioElement = document.getElementById('audio-playback');
+    if (audioElement) {
+      audioElement.srcObject = mediaStream;
+      audioElement.volume = 1.0; // 確保音量正常
+      console.log('[Offscreen] 音訊已設置到 <audio> 元素，用戶可以聽到聲音');
+    } else {
+      console.warn('[Offscreen] 未找到 audio 元素');
+    }
+
+    // 設定音訊處理管道（用於發送到 Deepgram）
     await setupAudioProcessing(mediaStream);
 
     isCapturing = true;
@@ -85,6 +96,12 @@ async function handleStopAudioCapture() {
   console.log('[Offscreen] 停止音訊捕獲');
 
   isCapturing = false;
+
+  // 停止音訊播放
+  if (audioElement) {
+    audioElement.srcObject = null;
+    audioElement = null;
+  }
 
   // 停止處理節點
   if (processorNode) {
@@ -163,9 +180,10 @@ async function setupAudioProcessing(stream) {
     });
   };
 
-  // 連接節點
+  // 連接節點（僅用於數據處理，不輸出到 destination）
+  // 注意：音訊播放由 <audio> 元素處理，這裡只處理數據
   sourceNode.connect(processorNode);
-  processorNode.connect(audioContext.destination);
+  processorNode.connect(audioContext.destination); // 需要連接到 destination 以保持 ScriptProcessorNode 運行
 
   console.log('[Offscreen] 音訊處理管道已建立');
 }
