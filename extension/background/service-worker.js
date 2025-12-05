@@ -280,6 +280,9 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', sendRes
     }
 
     // 2. 初始化 DeepgramClient
+    console.log('[Background] 初始化 Deepgram Client，語言:', language);
+    console.log('[Background] API Key 前綴:', apiKey ? apiKey.substring(0, 10) + '...' : 'null');
+
     if (!deepgramClient) {
       deepgramClient = new DeepgramClient(apiKey, { language });
     }
@@ -306,16 +309,27 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', sendRes
     deepgramClient.onError = (error) => {
       console.error('[Background] Deepgram 錯誤:', error);
 
+      // 提取錯誤訊息
+      let errorMsg = 'Deepgram 連接錯誤';
+      if (error && typeof error === 'object') {
+        errorMsg = error.message || error.type || errorMsg;
+      } else if (typeof error === 'string') {
+        errorMsg = error;
+      }
+
       // 通知 Content Script 發生錯誤
       chrome.tabs.sendMessage(tabId, {
         action: 'deepgramError',
-        error: error.message || 'Deepgram 連接錯誤'
+        error: errorMsg
       }).catch(err => {
         console.error('[Background] 轉發錯誤到 Content Script 失敗:', err);
       });
 
-      // 停止辨識
-      handleStopDeepgramRecognition(() => {});
+      // 只在已經連接後才自動停止（避免在連接過程中的錯誤循環）
+      if (isDeepgramActive && deepgramClient.isConnected) {
+        console.log('[Background] Deepgram 已連接但發生錯誤，自動停止');
+        handleStopDeepgramRecognition(() => {});
+      }
     };
 
     // 5. 連接到 Deepgram
