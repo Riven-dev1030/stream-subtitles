@@ -69,6 +69,11 @@ function init() {
     console.log('[Content] 收到訊息:', message.action);
 
     switch (message.action) {
+      case 'ping':
+        // 用於檢查 Content Script 是否已就緒
+        sendResponse({ success: true, ready: true });
+        break;
+
       case 'startRecording':
         startRecording(message.language, message.autoDetect);
         sendResponse({ success: true });
@@ -102,6 +107,28 @@ function init() {
         // 處理來自 Deepgram 的錯誤
         console.error('[Content] Deepgram 錯誤:', message.error);
         displayError(message.error);
+        sendResponse({ success: true });
+        break;
+
+      case 'deepgramStarted':
+        // Deepgram 已啟動，更新狀態
+        console.log('[Content] Deepgram 已啟動');
+        isRecording = true;
+        if (controlPanel) {
+          updateControlPanel();
+        }
+        showSubtitleUI();
+        sendResponse({ success: true });
+        break;
+
+      case 'deepgramStopped':
+        // Deepgram 已停止，更新狀態並隱藏字幕 UI
+        console.log('[Content] Deepgram 已停止');
+        isRecording = false;
+        if (controlPanel) {
+          updateControlPanel();
+        }
+        hideSubtitleUI();
         sendResponse({ success: true });
         break;
 
@@ -212,6 +239,25 @@ function startRecording(language = 'en', autoDetectMode = false) {
 function stopRecording(skipSessionReset = false) {
   console.log('[Content] 停止語音辨識');
 
+  // **關鍵修復：檢查是否正在使用 Deepgram，需要通知 Service Worker 停止**
+  // 判斷方式：如果沒有 recognition 對象但 isRecording 為 true，表示正在使用 Deepgram
+  const isUsingDeepgram = isRecording && !recognition;
+
+  if (isUsingDeepgram) {
+    console.log('[Content] 正在使用 Deepgram，發送停止請求到 Service Worker');
+    // 通知 Service Worker 停止 Deepgram
+    chrome.runtime.sendMessage({
+      action: 'stopDeepgramRecognition'
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error('[Content] 停止 Deepgram 失敗:', chrome.runtime.lastError);
+      } else {
+        console.log('[Content] Deepgram 已停止');
+      }
+    });
+  }
+
+  // 停止 Web Speech API（如果正在使用）
   if (recognition) {
     try {
       recognition.stop();

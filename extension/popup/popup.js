@@ -40,16 +40,38 @@ async function init() {
 
   // 初始化 Deepgram UI
   await initDeepgramUI();
+
+  // 開始狀態輪詢
+  startStatusPolling();
 }
+
+// 當 popup 關閉時清理資源
+window.addEventListener('unload', () => {
+  stopStatusPolling();
+});
 
 // 載入狀態
 function loadStatus() {
   // 從 background 取得狀態
   chrome.runtime.sendMessage({ action: 'getStatus' }, (response) => {
     if (response) {
+      const oldIsRecording = isRecording;
       isRecording = response.isRecording;
       currentLanguage = response.currentLanguage;
       autoDetect = response.autoDetect;
+
+      // 同步引擎狀態
+      if (response.currentEngine) {
+        currentEngine = response.currentEngine;
+      }
+
+      // 添加日誌以診斷狀態同步問題
+      console.log('[Popup] loadStatus:', {
+        isRecording: response.isRecording,
+        isDeepgramActive: response.isDeepgramActive,
+        currentEngine: response.currentEngine,
+        changed: oldIsRecording !== isRecording
+      });
 
       // 更新 UI
       updateUI();
@@ -66,6 +88,48 @@ function loadStatus() {
     }
     updateUI();
   });
+}
+
+// 定期更新狀態（每秒檢查一次）
+let statusUpdateInterval = null;
+
+function startStatusPolling() {
+  // 清除舊的定時器
+  if (statusUpdateInterval) {
+    clearInterval(statusUpdateInterval);
+  }
+
+  // 每秒更新一次狀態
+  statusUpdateInterval = setInterval(() => {
+    chrome.runtime.sendMessage({ action: 'getStatus' }, (response) => {
+      if (response) {
+        const oldIsRecording = isRecording;
+        const oldEngine = currentEngine;
+        isRecording = response.isRecording;
+
+        // 同步引擎狀態
+        if (response.currentEngine) {
+          currentEngine = response.currentEngine;
+        }
+
+        // 在狀態或引擎改變時更新 UI
+        if (oldIsRecording !== isRecording || oldEngine !== currentEngine) {
+          console.log('[Popup] 狀態改變:', {
+            錄音: isRecording ? '錄音中' : '已停止',
+            引擎: currentEngine
+          });
+          updateUI();
+        }
+      }
+    });
+  }, 1000);
+}
+
+function stopStatusPolling() {
+  if (statusUpdateInterval) {
+    clearInterval(statusUpdateInterval);
+    statusUpdateInterval = null;
+  }
 }
 
 // 綁定事件
@@ -183,10 +247,10 @@ function startRecording() {
         if (response && response.success) {
           isRecording = true;
           updateUI();
-          console.log('[Popup] Deepgram 已啟動');
-          alert('✅ Deepgram 辨識已啟動！\n\n字幕將會顯示在頁面上');
+          console.log('[Popup] ✅ Deepgram 已啟動，字幕將會顯示在頁面上');
         } else {
-          alert('❌ 啟動失敗\n\n' + (response.error || '未知錯誤'));
+          console.error('[Popup] ❌ Deepgram 啟動失敗:', response?.error || '未知錯誤');
+          alert('❌ 啟動失敗\n\n' + (response?.error || '未知錯誤'));
         }
       });
     } else {
@@ -412,13 +476,15 @@ function getLanguageName(langCode) {
  * 載入引擎設定
  */
 async function loadEngineSettings() {
-  // 從 storage 載入引擎設定
-  chrome.storage.sync.get(['recognitionEngine'], (result) => {
-    if (result.recognitionEngine) {
-      currentEngine = result.recognitionEngine;
-    }
-    updateUI();
+  // 從 storage 載入引擎設定（使用 Promise 以正確等待）
+  const result = await new Promise((resolve) => {
+    chrome.storage.sync.get(['recognitionEngine'], resolve);
   });
+
+  if (result.recognitionEngine) {
+    currentEngine = result.recognitionEngine;
+    console.log('[Popup] 從 storage 載入引擎:', currentEngine);
+  }
 
   // 檢查是否有 Deepgram API Key
   try {
@@ -439,6 +505,9 @@ async function loadEngineSettings() {
     console.error('[Popup] 檢查 Deepgram API Key 失敗:', error);
     hasDeepgramApiKey = false;
   }
+
+  // 在所有設定載入完成後更新 UI
+  updateUI();
 }
 
 // ============================================
@@ -624,9 +693,4 @@ async function initDeepgramUI() {
   });
 }
 
-// 在 init 函數中添加
-document.addEventListener('DOMContentLoaded', () => {
-  init();
-  initDeepgramUI();
-});
 console.log('[Popup] Popup script 載入完成');

@@ -60,8 +60,8 @@ class DeepgramClient {
       this.ws.onerror = (error) => this._handleError(error);
       this.ws.onclose = (event) => this._handleClose(event);
 
-      // 等待連接建立（最多 5 秒）
-      await this._waitForConnection(5000);
+      // 等待連接建立（最多 10 秒）
+      await this._waitForConnection(10000);
 
     } catch (error) {
       console.error('[Deepgram] 連接失敗:', error);
@@ -100,7 +100,7 @@ class DeepgramClient {
         if (this.isConnected) {
           clearTimeout(timer);
           resolve();
-        } else if (this.ws.readyState === WebSocket.CLOSED) {
+        } else if (!this.ws || this.ws.readyState === WebSocket.CLOSED || this.ws.readyState === WebSocket.CLOSING) {
           clearTimeout(timer);
           reject(new Error('連接失敗'));
         } else {
@@ -192,10 +192,18 @@ class DeepgramClient {
   _handleError(error) {
     console.error('[Deepgram] WebSocket 錯誤:', error);
 
+    // 提取錯誤訊息
+    let errorMessage = 'WebSocket 連接錯誤';
+    if (error && error.message) {
+      errorMessage = error.message;
+    } else if (error && error.type) {
+      errorMessage = `WebSocket ${error.type} 錯誤`;
+    }
+
     if (this.onError) {
       this.onError({
         type: 'websocket_error',
-        message: '連接錯誤',
+        message: errorMessage,
         error
       });
     }
@@ -261,12 +269,16 @@ class DeepgramClient {
         console.warn('[Deepgram] 發送關閉信號失敗:', error);
       }
 
-      setTimeout(() => {
-        if (this.ws) {
-          this.ws.close();
-          this.ws = null;
-        }
-      }, 100);
+      // **關鍵修復：立即關閉連接，不使用 setTimeout**
+      // 這樣可以避免重新啟動時的競態條件
+      try {
+        this.ws.close();
+        console.log('[Deepgram] WebSocket 已立即關閉');
+      } catch (error) {
+        console.error('[Deepgram] 關閉 WebSocket 失敗:', error);
+      }
+
+      this.ws = null;
     }
   }
 
