@@ -4,6 +4,309 @@
 
 ---
 
+## 2025-12-05 - Deepgram MVP 穩定性修復（Phase 2 完成）
+
+### 🎯 Phase 2 目標達成
+
+完成 Deepgram 雙引擎整合並修復所有關鍵 bug，系統達到生產就緒狀態。
+
+---
+
+### 🐛 問題 1: chrome.tabCapture API 棄用警告
+
+**症狀**:
+- Console 顯示 `TypeError: chrome.tabCapture.capture is not a function`
+- Deepgram 無法啟動音訊捕獲
+
+**根本原因**:
+- `chrome.tabCapture.capture()` 在 Manifest V3 中已棄用
+- 需要使用新的 `chrome.tabCapture.getMediaStreamId()` + Offscreen Document 架構
+
+**解決方案** (Commit: `8a29859`):
+1. 創建 Offscreen Document (`extension/offscreen/offscreen.html`, `offscreen.js`)
+2. 修改 `manifest.json` 添加 `offscreen` 權限
+3. Service Worker 使用 `chrome.tabCapture.getMediaStreamId()` 獲取 streamId
+4. Offscreen Document 使用 `getUserMedia({ chromeMediaSource: 'tab' })` 捕獲音訊
+
+---
+
+### 🐛 問題 2: 音訊捕獲導致影片靜音
+
+**症狀**:
+- 啟動 Deepgram 後，影片聲音消失
+- 音訊被捕獲但沒有播放給用戶
+
+**根本原因**:
+- MediaStream 被捕獲用於語音辨識，但沒有連接到播放設備
+
+**解決方案** (Commit: `0c66db0`):
+```html
+<!-- offscreen.html -->
+<audio id="audio-playback" autoplay></audio>
+```
+
+```javascript
+// offscreen.js
+audioElement = document.getElementById('audio-playback');
+audioElement.srcObject = mediaStream;
+audioElement.volume = 1.0;
+```
+
+---
+
+### 🐛 問題 3: ScriptProcessorNode 已棄用警告 + 性能問題
+
+**症狀**:
+- Console 警告: `The ScriptProcessorNode is deprecated. Use AudioWorkletNode instead.`
+- 啟動時瀏覽器和頁面卡頓數秒
+
+**根本原因**:
+- ScriptProcessorNode 在主線程運行，阻塞 UI
+- 已被 AudioWorkletNode 取代（運行在獨立音訊線程）
+
+**解決方案** (Commit: `195a74f`):
+1. 創建 `extension/offscreen/audio-processor.js` (AudioWorklet 處理器)
+2. 使用 Transferable Objects 傳輸音訊數據，提升性能
+3. 音訊處理完全在獨立線程，不再阻塞主線程
+
+**性能對比**:
+| 項目 | ScriptProcessorNode | AudioWorkletNode |
+|-----|-------------------|------------------|
+| 運行線程 | 主線程（阻塞 UI） | 音訊線程（獨立） |
+| 啟動卡頓 | 明顯卡頓 2-3 秒 | 流暢無卡頓 |
+| 數據傳輸 | 普通陣列 | Transferable Objects |
+
+---
+
+### 🐛 問題 4: 停止按鈕無法停止 Deepgram
+
+**症狀**:
+- 小介面停止按鈕點擊後，字幕繼續顯示
+- 頁面刷新後，Deepgram 仍在背景運行
+
+**根本原因**:
+1. **停止按鈕問題**: Content Script 的 `stopRecording()` 只停止 Web Speech API，沒有通知 Service Worker 停止 Deepgram
+2. **頁面刷新問題**: Tab 更新監聽器條件錯誤（`changeInfo.url` 在刷新時不存在）
+
+**解決方案** (Commit: `3e4621c`):
+
+**1. 停止按鈕修復**:
+```javascript
+// content.js
+function stopRecording() {
+  // 檢測是否使用 Deepgram（isRecording 為 true 但沒有 recognition 對象）
+  const isUsingDeepgram = isRecording && !recognition;
+
+  if (isUsingDeepgram) {
+    chrome.runtime.sendMessage({ action: 'stopDeepgramRecognition' });
+  }
+
+  if (recognition) {
+    recognition.stop();
+  }
+}
+```
+
+**2. 頁面刷新修復**:
+```javascript
+// service-worker.js
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  // 修改前: if (changeInfo.status === 'loading' && changeInfo.url)
+  // 修改後: 移除 changeInfo.url 條件
+  if (changeInfo.status === 'loading') {
+    if (isDeepgramActive && tabId === currentTabId) {
+      // 自動清理 Deepgram 資源
+    }
+  }
+});
+```
+
+---
+
+### 🐛 問題 5: 停止後重新啟動導致頁面當掉
+
+**症狀**:
+- 停止 Deepgram 後立即重新啟動，頁面完全卡死
+- 需要刷新頁面才能恢復
+
+**根本原因**: **競態條件（Race Condition）**
+```
+停止流程（異步）        啟動流程（開始太早）
+     ↓                      ↓
+WebSocket 關閉中      創建新 WebSocket ❌ 衝突
+     ↓                      ↓
+Offscreen 關閉中      創建新 Offscreen ❌ 衝突
+     ↓                      ↓
+AudioContext 關閉中   創建新 AudioContext ❌ 衝突
+     ↓
+資源完全釋放（太晚了！）
+```
+
+**解決方案** (Commit: `9f6b47e`):
+
+**1. 啟動前等待資源完全釋放**:
+```javascript
+// service-worker.js
+async function handleStartDeepgramRecognition(tabId, language) {
+  if (isDeepgramActive) {
+    await handleStopDeepgramRecognition(() => {});
+
+    // 等待 500ms 確保所有資源完全釋放
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+
+  // 開始創建新資源...
+}
+```
+
+**2. WebSocket 立即關閉（移除延遲）**:
+```javascript
+// deepgram-client.js
+disconnect() {
+  // 修改前: setTimeout(() => { this.ws.close(); }, 100);
+  // 修改後: 立即關閉
+  this.ws.close();
+  this.ws = null;
+}
+```
+
+**3. Offscreen Document 強制重新創建**:
+```javascript
+// service-worker.js
+async function createOffscreenDocument() {
+  const existingContexts = await chrome.runtime.getContexts({
+    contextTypes: ['OFFSCREEN_DOCUMENT']
+  });
+
+  if (existingContexts.length > 0) {
+    // 先關閉舊的，再創建新的
+    await closeOffscreenDocument();
+  }
+
+  // 創建新的...
+}
+```
+
+**4. 總是創建全新的 DeepgramClient**:
+```javascript
+// service-worker.js
+if (deepgramClient) {
+  deepgramClient.disconnect();  // 先清理舊的
+}
+
+deepgramClient = new DeepgramClient(apiKey, { language });  // 創建新的
+```
+
+---
+
+### 🐛 問題 6: UI 狀態不同步
+
+**症狀**:
+- 主介面（Popup）顯示"未啟動"，但小介面（Content UI）顯示"錄音中"
+- 反之亦然
+- 停止按鈕有時無法點擊
+
+**根本原因**:
+1. **缺少啟動通知**: Service Worker 啟動 Deepgram 後，沒有通知 Content Script
+2. **狀態來源錯誤**: `getStatus` 根據運行狀態判斷引擎，而非用戶選擇
+
+**解決方案**:
+
+**1. 添加啟動/停止通知** (Commit: `2e5cc52`):
+```javascript
+// service-worker.js - 啟動成功後
+chrome.tabs.sendMessage(tabId, { action: 'deepgramStarted' });
+
+// 停止後
+chrome.tabs.sendMessage(tabId, { action: 'deepgramStopped' });
+
+// content.js - 處理通知
+case 'deepgramStarted':
+  isRecording = true;
+  updateControlPanel();  // 更新小介面
+  showSubtitleUI();
+  break;
+
+case 'deepgramStopped':
+  isRecording = false;
+  updateControlPanel();
+  hideSubtitleUI();
+  break;
+```
+
+**2. 修復引擎狀態判斷** (Commit: `9d0be30`):
+```javascript
+// service-worker.js
+case 'getStatus':
+  chrome.storage.sync.get(['recognitionEngine'], (result) => {
+    const selectedEngine = result.recognitionEngine || 'webspeech';
+    sendResponse({
+      isRecording: isDeepgramActive,
+      currentEngine: selectedEngine  // 使用用戶選擇，不是運行狀態
+    });
+  });
+```
+
+---
+
+### 📊 詳細日誌系統
+
+為了便於診斷問題，添加了詳細的清理日誌：
+
+```javascript
+// service-worker.js
+console.log('[Background] 🧹 開始清理 Deepgram 資源...');
+console.log('[Background] 📡 關閉 Deepgram WebSocket 連接...');
+console.log('[Background] ✅ Deepgram WebSocket 已關閉');
+console.log('[Background] 🎤 通知 Offscreen Document 停止音訊捕獲...');
+
+// offscreen.js
+console.log('[Offscreen] 🛑 停止音訊捕獲...');
+console.log('[Offscreen] 🎛️ 停止 AudioWorklet 節點...');
+console.log('[Offscreen] 📹 停止 MediaStream 軌道...');
+console.log('[Offscreen]   - 停止軌道: audio (tab)');
+console.log('[Offscreen] ✅ 音訊捕獲完全停止');
+```
+
+---
+
+### ✅ Phase 2 完成狀態
+
+**已修復的關鍵 Bug**:
+- ✅ chrome.tabCapture API 遷移至 Manifest V3
+- ✅ 音訊捕獲時影片靜音
+- ✅ ScriptProcessorNode 棄用警告 + 性能卡頓
+- ✅ 停止按鈕無法停止 Deepgram
+- ✅ 頁面刷新後 Deepgram 繼續運行
+- ✅ 停止後重新啟動導致頁面當掉
+- ✅ 主介面與小介面狀態不同步
+- ✅ 引擎選擇不生效
+
+**Deepgram MVP 功能清單**:
+- ✅ 雙引擎架構（Web Speech API + Deepgram）
+- ✅ API Key 加密儲存（AES-GCM-256）
+- ✅ Offscreen Document 音訊捕獲
+- ✅ AudioWorklet 音訊處理（無卡頓）
+- ✅ Tab 生命週期管理（自動清理）
+- ✅ 狀態同步機制
+- ✅ 詳細日誌系統
+
+**相關 Commits** (按時間順序):
+1. `8a29859` - 初始 Deepgram MVP
+2. `0c66db0` - 修復音訊播放
+3. `bb69517` - 修復 WebSocket 連接
+4. `8199267` - 修復 Content Script 連接
+5. `62fce37` - 修復 UI 狀態同步
+6. `d127db3` - 移除重複事件監聽器
+7. `9d0be30` - 修復引擎選擇
+8. `195a74f` - AudioWorkletNode 遷移
+9. `a8bf2ed` - Tab 生命週期管理
+10. `2e5cc52` - UI 狀態同步改進
+11. `3e4621c` - 修復停止功能
+12. `9f6b47e` - 修復競態條件（Phase 2 完成）
+
+---
+
 ## 2025-11-21 - 字幕凍結和重複問題修復
 
 ### 🐛 問題描述
@@ -94,7 +397,7 @@ const HEARTBEAT_TIMEOUT = 6000;  // 6秒無結果就重啟
 - [ ] 在 `onend` 事件中添加額外的日誌，追蹤重啟行為
 - [ ] 考慮定期強制重啟（例如每 30 秒）
 - [ ] 研究 Web Speech API 的已知問題和限制
-- [ ] 考慮替代方案（WebSocket + 服務器端 STT）
+- [x] 考慮替代方案（WebSocket + 服務器端 STT）→ 已完成 Deepgram 整合
 
 ### 📝 相關文件
 
@@ -104,444 +407,26 @@ const HEARTBEAT_TIMEOUT = 6000;  // 6秒無結果就重啟
 
 ---
 
-### 🔄 2025-11-21 下午 - 修復混亂的清除邏輯
-
-#### 新發現的問題
-
-用戶反映：**字幕清除順序混亂**
-- 症狀：字幕跑了4行，清除的不是第1行（最舊），而是第2、4行
-- 影響：用戶還沒看清字幕就被移除了
-
-#### 根本原因分析
-
-1. **濫用 filter() 移除 interim**
-```javascript
-// 錯誤的做法（舊代碼）
-displayBuffer = displayBuffer.filter(item => item.source === 'final');
-// 這會移除所有 interim，無論位置在哪！
-```
-
-2. **過度激進的重疊檢測**
-```javascript
-// 太寬鬆（舊代碼）
-if (existing.includes(sentence) || sentence.includes(existing)) {
-  // "Hello world" 會包含 "Hello"，但它們可能是不同的句子
-}
-```
-
-3. **缺少最小顯示時間**
-- 字幕可能剛出現就被移除
-- 用戶根本來不及閱讀
-
-#### 修復方案
-
-1. **改進 interim 清理** (extension/content/content.js:393-413)
-   - 只清理超過 5 秒的舊 interim
-   - 保留最近的 interim 讓用戶看到
-
-2. **優化重疊檢測** (extension/content/content.js:429-440)
-   - 只有當長度差距 ≤ 3 字時才認為重疊
-   - 減少誤判
-
-3. **添加最小顯示時間** (extension/content/content.js:466-500)
-   - 每個句子至少顯示 **3 秒**
-   - 即使超限，也要等顯示夠久才清除
-
-4. **確保 FIFO 順序**
-   - 永遠使用 `shift()` 移除最舊的（第一個）
-   - 清理順序可預測
-
----
-
-### 🎯 2025-11-21 傍晚 - 移除 Interim 顯示，大幅簡化邏輯
-
-#### 用戶洞察
-
-用戶提出關鍵問題：**「還是不要顯示臨時句子，這會增加多少延遲？」**
-
-分析發現：
-- Interim（臨時）延遲：~0 秒，但不斷變化、不準確
-- Final（最終）延遲：~1-2 秒，但準確穩定
-- **結論：1-2 秒延遲對字幕來說完全可接受**
-
-#### 重構決策
-
-**完全移除 interim 顯示，只保留 final 結果**
-
-**刪除的代碼：**
-- 所有 interim 處理邏輯（~100 行）
-- source 標記（'final' vs 'interim'）
-- interim 清理邏輯
-- 臨時字幕相關變數
-
-**簡化後的邏輯：**
-```javascript
-function displaySubtitle(text, isFinal) {
-  if (!isFinal) {
-    return; // 直接跳過所有 interim
-  }
-  // 只處理 final 結果...
-}
-```
-
-**displayBuffer 簡化為：**
-```javascript
-{
-  text: "字幕內容",
-  timestamp: 時間戳
-  // 不再需要 source 欄位
-}
-```
-
-#### 優點
-
-1. **代碼量減少**: 210 行 → 113 行（減少約 46%）
-2. **邏輯清晰**: 不再有 final/interim 混合處理
-3. **沒有閃爍**: 字幕不會不斷變化
-4. **減少 bug**: 移除了大量潛在錯誤來源
-5. **更易維護**: 單一路徑，更容易理解
-
-#### 權衡
-
-- **延遲增加**: 約 1-2 秒
-- **用戶體驗**: 對字幕來說可接受（觀眾習慣字幕延遲）
-
-#### ⚠️ 實際測試結果
-
-**用戶反饋：延遲太久！**
-- 預期延遲：1-2 秒
-- 實際延遲：遠超過預期（可能 5-10 秒）
-- 影響：嚴重影響使用體驗
-
-**決定：回退此更改**
-- 恢復 interim 顯示功能（commit 2b3e25a）
-- 保留所有其他改進（清理邏輯、心跳檢測等）
-- 結論：**即時反饋比準確性更重要**
-
----
-
-### 🔧 2025-11-21 深夜 - 為 Interim 添加完整清理邏輯
-
-#### 用戶關鍵發現
-
-通過 Console 日誌分析，用戶發現：
-
-**只顯示 Final 時：**
-- ✅ 延遲正常
-- ✅ 清理邏輯正常運作
-- ❌ 但延遲太高（5-10秒）
-
-**加入 Interim 後：**
-- ✅ 延遲低（即時）
-- ❌ 所有問題回來了：累積、不清除、超長句子
-- **根本原因：全部都是 Interim，沒有 Final！**
-
-#### Console 日誌證據
-
-```
-[Content] Interim 過長 ( 32 字)，自動斷句
-[Content] ⭕ 心跳檢測：距離上次結果 0 秒
-```
-
-沒有看到 `[Content] === Final 結果 ===` 或 `[Content] Buffer 清理前`
-
-**結論：Final 的清理邏輯從未被觸發！**
-
-#### 修復方案
-
-**為 Interim 添加完整的清理邏輯：**
-
-1. **新增 Interim 專屬最小顯示時間** (extension/content/content.js:19)
-```javascript
-const MIN_DISPLAY_TIME = 3000;        // Final: 3秒
-const MIN_INTERIM_DISPLAY_TIME = 2000; // Interim: 2秒（更快清除）
-```
-
-2. **Interim 斷句時的完整清理** (extension/content/content.js:546-581)
-   - 按句子數清理（帶最小顯示時間保護）
-   - 按總字符數清理（帶最小顯示時間保護）
-   - 自動判斷 final/interim 使用不同的最小顯示時間
-   - 詳細的調試日誌
-
-3. **清理邏輯觸發時機**
-   - **Final 處理時**：清理過舊的 interim + 按限制清理 final
-   - **Interim 斷句時**：立即按限制清理（現在有保護機制）
-
-#### 預期效果
-
-- ✅ Interim 即時顯示（低延遲）
-- ✅ 不會無限累積（有清理機制）
-- ✅ 用戶有足夠時間閱讀（最小顯示 2 秒）
-- ✅ Final/Interim 混合時清理邏輯正確
-
----
-
-## 2025-11-22 - 定時清理機制 + 字數額度共享
-
-### 🐛 發現的新問題
-
-#### 問題 1：Interim 快速累積導致 Buffer 爆滿
-
-**症狀**：
-- Console 顯示 `Buffer 最終狀態: 10 項`（應該最多 3 項）
-- Interim 每 0.1 秒就加入一個新項目到 Buffer
-- 內容快速累積，無法控制
-
-**日誌證據**：
-```
-Interim 過長 ( 72 字)，自動斷句
-Interim 過長 ( 73 字)，自動斷句
-Interim 過長 ( 74 字)，自動斷句
-...
-Buffer 最終狀態: 10 項  ← 異常！
-```
-
-**根本原因**：
-1. Interim 每次都會變化（72→73→74 字），內容不斷累積
-2. 去重檢查只有「完全匹配」，無法防止相似句子
-3. Interim 每 0.1 秒觸發，但需要 2 秒才能清理 → 累積速度 > 清理速度
-
----
-
-#### 問題 2：清理邏輯只在 Final 時觸發
-
-**症狀**：
-- 句子顯示了 32 秒才被清理（應該 3 秒）
-- Buffer 累積到 10 項才開始清理
-
-**日誌證據**：
-```
-移除舊句子（已顯示 32 秒）× 5 次
-❌ 最舊句子還不能移除（僅顯示 0 秒）
-Buffer 最終狀態: 10 項
-```
-
-**根本原因**：
-- 清理邏輯寫在 `if (isFinal)` 區塊內
-- 如果長時間沒有 Final 結果 → 不清理
-- 句子可能累積 30+ 秒才被清理
-
-**時間軸分析**：
-```
-0秒  → Final 結果，加入 3 句
-5秒  → Interim...（無 Final，不清理）
-10秒 → Interim...（無 Final，不清理）
-15秒 → Interim...（無 Final，不清理）
-...
-32秒 → Final 結果 → 才發現 Buffer 有 10 項！
-```
-
----
-
-### 🔧 解決方案
-
-#### 方案 1：Interim 完全不加入 Buffer（重構）
-
-**設計理念**：
-- Buffer = Final 專用（最準確的內容）
-- Interim = 臨時預覽（不污染 Buffer）
-
-**實現** (commit: c9fb4ac):
-```javascript
-// 移除 75 行複雜的 Interim 斷句和清理邏輯
-// 新增 4 行簡潔邏輯
-else { // isFinal === false
-  console.log('[Content] Interim 結果');
-
-  // 直接顯示在臨時區域，不加入 displayBuffer
-  interimSubtitle = text;
-  lastTranscript = text;
-  updateSubtitleDisplay(text);
-}
-```
-
-**效果**：
-- ✅ Interim 不再累積到 Buffer
-- ✅ 邏輯更清晰（Buffer 只有 Final）
-- ✅ 避免 Interim 快速累積問題
-
----
-
-#### 方案 2：定時清理器（核心改進）
-
-**問題分析**：
-- 舊機制：只在 Final 時清理 → 可能 30+ 秒才清理
-- 新機制：每 1 秒自動檢查 → 最多 2.5 秒就清理
-
-**實現** (commit: d364624):
-
-1. **創建獨立的清理函數** (content.js:350-392)
-```javascript
-function cleanupBuffer() {
-  if (displayBuffer.length === 0) return;
-
-  const currentTime = Date.now();
-  let cleaned = false;
-
-  // 1. 按句子數清理
-  while (displayBuffer.length > MAX_DISPLAY_SENTENCES) {
-    const oldest = displayBuffer[0];
-    const displayDuration = currentTime - oldest.timestamp;
-
-    if (displayDuration >= MIN_DISPLAY_TIME) { // 1500ms
-      displayBuffer.shift();
-      cleaned = true;
-    } else {
-      break; // 顯示時間不夠，暫停清理
-    }
-  }
-
-  // 2. 按總字符數清理
-  let totalChars = displayBuffer.reduce((sum, item) => sum + item.text.length, 0);
-  while (totalChars > MAX_TOTAL_CHARS && displayBuffer.length > 1) {
-    const oldest = displayBuffer[0];
-    const displayDuration = currentTime - oldest.timestamp;
-
-    if (displayDuration >= MIN_DISPLAY_TIME) {
-      displayBuffer.shift();
-      totalChars -= removed.text.length;
-      cleaned = true;
-    } else {
-      break;
-    }
-  }
-
-  // 如果清理了內容，更新顯示
-  if (cleaned) {
-    updateSubtitleDisplay(interimSubtitle);
-  }
-}
-```
-
-2. **啟動定時清理器** (content.js:102-105)
-```javascript
-// 在 init() 函數中
-setInterval(() => {
-  cleanupBuffer();
-}, 1000);
-console.log('[Content] ✅ 定時清理器已啟動（每 1 秒檢查一次）');
-```
-
-3. **Final 處理時調用清理**
-```javascript
-// Final 處理邏輯簡化
-cleanupBuffer(); // 調用統一的清理函數
-```
-
-**效果**：
-- ✅ 句子最多顯示 1.5 秒 + 1 秒延遲 = **2.5 秒**
-- ✅ Buffer 不會累積超過 3-4 項
-- ✅ 不依賴 Final 結果，完全獨立運作
-
----
-
-#### 方案 3：Final + Interim 共享 50 字額度（優化）
-
-**設計目標**：
-- 總字數嚴格控制在 50 字以內
-- 版面更乾淨、更穩定
-- 動態分配 Interim 可用額度
-
-**實現** (commit: e092cac):
-
-```javascript
-// Interim 處理邏輯
-else { // isFinal === false
-  // 1. 計算 Buffer (Final) 的總字數
-  const bufferTotalChars = displayBuffer.reduce((sum, item) =>
-    sum + item.text.length, 0
-  );
-
-  // 2. 計算剩餘額度
-  const remainingQuota = MAX_TOTAL_CHARS - bufferTotalChars; // 50 - Buffer
-
-  // 3. Interim 可顯示字數 = min(剩餘額度, 35)
-  const MAX_INTERIM_DISPLAY_CHARS = 35;
-  const interimMaxChars = Math.max(0, Math.min(remainingQuota, MAX_INTERIM_DISPLAY_CHARS));
-
-  // 4. 根據可用額度截取 Interim 文字
-  let displayText = '';
-  if (interimMaxChars > 0) {
-    if (text.length > interimMaxChars) {
-      displayText = '...' + text.slice(-interimMaxChars);
-    } else {
-      displayText = text;
-    }
-  } else {
-    // Buffer 已滿額，Interim 無法顯示
-    displayText = '';
-  }
-
-  // 5. 直接顯示在臨時區域
-  interimSubtitle = displayText;
-  updateSubtitleDisplay(displayText);
-}
-```
-
-**動態分配示例**：
-
-| Buffer 字數 | 剩餘額度 | Interim 可顯示 | 總字數 |
-|-----------|---------|--------------|-------|
-| 10 字 | 40 字 | 35 字 | 45 字 |
-| 20 字 | 30 字 | 30 字 | 50 字 |
-| 40 字 | 10 字 | 10 字 | 50 字 |
-| 50 字 | 0 字 | 0 字 | 50 字 |
-
-**效果**：
-- ✅ 總字數嚴格 ≤ 50 字
-- ✅ Buffer 多時 Interim 少，Buffer 少時 Interim 多
-- ✅ 版面乾淨、穩定
-
----
-
-### 📊 參數調整
-
-```javascript
-// 時間參數
-const MIN_DISPLAY_TIME = 1500;        // 3秒 → 1.5秒
-const HEARTBEAT_TIMEOUT = 3000;       // 5秒 → 3秒
-
-// 字數限制
-const MAX_TOTAL_CHARS = 50;           // Final + Interim 共享
-const MAX_INTERIM_DISPLAY_CHARS = 35; // Interim 最多 35 字
-```
-
----
-
-### ✅ 改進效果對比
-
-| 項目 | 舊版本（v1-v2） | 新版本 v3 |
-|-----|--------------|----------|
-| **句子顯示時間** | 可能 30+ 秒 | 最多 2.5 秒 |
-| **Buffer 累積** | 可能 10+ 項 | 最多 3-4 項 |
-| **總字數控制** | 無限制 | 嚴格 ≤ 50 字 |
-| **Interim 處理** | 加入 Buffer，累積 | 臨時顯示，不累積 |
-| **清理機制** | 只在 Final 時 | 每 1 秒自動清理 |
-| **清理依賴性** | 依賴 Final 結果 | 完全獨立 |
-| **版面穩定性** | 混亂、不穩定 | 乾淨、穩定 |
-
----
-
-### 📝 相關文檔
-
-- **詳細邏輯說明**: `docs/SUBTITLE_PROCESSING_LOGIC.md` (v3)
-- **Commits**:
-  - `c9fb4ac`: Interim 不再加入 Buffer
-  - `d364624`: 加入定時清理器
-  - `e092cac`: Final + Interim 共享額度
-  - `355a336`: 更新文檔至 v3
-
----
-
 ## 待辦事項
 
+### Deepgram MVP (Phase 2) ✅ 已完成
+- [x] chrome.tabCapture API 遷移
+- [x] Offscreen Document 架構
+- [x] AudioWorkletNode 遷移
+- [x] Tab 生命週期管理
+- [x] 狀態同步機制
+- [x] 停止功能修復
+- [x] 競態條件修復
+
+### Web Speech API 優化
 - [ ] 深入調查字幕卡住的根本原因
 - [ ] 考慮添加更詳細的除錯日誌
 - [ ] 研究 Chrome 和 Edge 的 Speech Recognition 行為差異
 - [ ] 測試在不同網站和環境下的穩定性
+
+### 已完成的優化
 - [x] 修復混亂的清除邏輯
 - [x] 確保字幕至少顯示 3 秒（已調整為 1.5 秒）
-- [x] 移除 interim 顯示，簡化邏輯
 - [x] 解決 Buffer 累積過多問題（定時清理器）
 - [x] 解決句子顯示時間過長問題（30+ 秒 → 2.5 秒）
 - [x] 實現 Final + Interim 字數額度共享（總字數 ≤ 50）
@@ -549,417 +434,4 @@ const MAX_INTERIM_DISPLAY_CHARS = 35; // Interim 最多 35 字
 
 ---
 
-## 2025-11-22 下午 - Interim 主導模式重大重構
-
-### 🎯 核心問題：Final 延遲太久
-
-**用戶反饋**：
-- Final 結果延遲 7-12 秒
-- 字幕內容嚴重落後影片進度
-- 觀看體驗很差，看到的資訊已過時
-
-**設計決策：改為 Interim 主導模式**
-
-傳統模式問題：
-- ❌ Final 延遲 7-12 秒（太慢）
-- ✅ Interim 延遲 ~0 秒（即時）
-
-**解決方案** (Commit: `81d86d0`):
-
-#### 1. Interim 成為主要字幕來源
-```javascript
-// Interim 立即加入 displayBuffer
-if (!isFinal) {
-  // 檢測是否更新現有句子
-  if (shouldUpdate) {
-    displayBuffer[displayBuffer.length - 1] = {
-      text: finalText,
-      timestamp: Date.now(),
-      source: 'interim'
-    };
-  } else {
-    // 新句子：加入 buffer
-    displayBuffer.push({
-      text: normalized,
-      timestamp: Date.now(),
-      source: 'interim'
-    });
-  }
-}
-```
-
-#### 2. Final 改為靜默校正角色
-```javascript
-if (isFinal) {
-  // 找到對應的 interim 項目
-  let targetIndex = -1;
-  for (let i = displayBuffer.length - 1; i >= 0; i--) {
-    if (displayBuffer[i].source === 'interim') {
-      targetIndex = i;
-      break;
-    }
-  }
-
-  if (targetIndex >= 0) {
-    const similarity = calculateSimilarity(interimText, finalText);
-
-    // 靜默更新（不重新顯示）
-    displayBuffer[targetIndex] = {
-      text: finalText,
-      timestamp: interimItem.timestamp,
-      source: 'final',
-      corrected: similarity < 0.9
-    };
-  }
-}
-```
-
-#### 3. 新增相似度計算函數
-```javascript
-function calculateSimilarity(str1, str2) {
-  if (!str1 || !str2) return 0;
-  if (str1 === str2) return 1;
-
-  const longer = str1.length > str2.length ? str1 : str2;
-  const shorter = str1.length > str2.length ? str2 : str1;
-
-  let matches = 0;
-  for (let i = 0; i < shorter.length; i++) {
-    if (longer.includes(shorter[i])) matches++;
-  }
-  return matches / longer.length;
-}
-```
-
-### ✅ 改進效果
-
-| 項目 | 舊模式（Final 主導） | 新模式（Interim 主導） |
-|-----|-----------------|-------------------|
-| **延遲** | 7-12 秒 | ~0 秒 |
-| **即時性** | ❌ 嚴重落後 | ✅ 即時跟上 |
-| **準確性** | ✅ 最終準確 | ✅ 背景校正 |
-| **體驗** | ❌ 資訊過時 | ✅ 流暢自然 |
-
-### 📝 相關提交
-- Commit: `81d86d0` - feat: 改為 Interim 主導解決 Final 延遲問題
-- 代碼變更: -156 行 +102 行（大幅簡化）
-
----
-
-## 2025-11-22 下午 - 修復字數限制失效問題
-
-### 🐛 嚴重 Bug：字數限制完全失效
-
-**用戶截圖顯示**：
-- 單句字幕顯示 170+ 字（應該最多 50 字）
-- 有時短暫顯示 340 字（170 interim + 170 final）
-- 用戶反饋：「我是看影片還是看文章？」
-
-### 🔍 根本原因
-
-**問題 1：Interim 更新時沒有檢查字數限制**
-```javascript
-// 錯誤的代碼（舊版）
-displayBuffer[displayBuffer.length - 1] = {
-  text: normalized,  // ⚠️ 沒有檢查長度！
-  timestamp: Date.now(),
-  source: 'interim'
-};
-```
-
-**問題 2：Final 校正時也沒檢查字數限制**
-```javascript
-// 錯誤的代碼（舊版）
-displayBuffer[targetIndex] = {
-  text: normalized,  // ⚠️ 沒有檢查長度！
-  timestamp: interimItem.timestamp,
-  source: 'final'
-};
-```
-
-### 🔧 修復方案 (Commit: `a4ad0fe`)
-
-#### 修復 1：Interim 更新時強制檢查字數
-```javascript
-// 計算其他項目的字數
-const otherItemsChars = displayBuffer
-  .slice(0, -1)
-  .reduce((sum, item) => sum + item.text.length, 0);
-
-// 計算允許的最大字數
-const maxAllowed = MAX_TOTAL_CHARS - otherItemsChars;
-
-// 截斷文字
-let finalText = normalized;
-if (normalized.length > maxAllowed) {
-  finalText = normalized.slice(-maxAllowed);
-  console.warn(`⚠️ Interim 超長（${normalized.length}字），截斷為 ${maxAllowed} 字`);
-}
-```
-
-#### 修復 2：Final 校正時也要檢查字數
-```javascript
-// 計算除了被校正項目外的其他項目字數
-const otherItemsChars = displayBuffer
-  .filter((_, i) => i !== targetIndex)
-  .reduce((sum, item) => sum + item.text.length, 0);
-
-const maxAllowed = MAX_TOTAL_CHARS - otherItemsChars;
-
-// 截斷 Final 文字
-let finalText = normalized;
-if (normalized.length > maxAllowed) {
-  finalText = normalized.slice(-maxAllowed);
-}
-```
-
-### ✅ 修復效果
-- ✅ 總字數嚴格控制在 50 字以內
-- ✅ 不會再出現 170 字或 340 字的情況
-- ✅ 版面乾淨、可讀性高
-
----
-
-## 2025-11-22 下午 - 修復日誌負數和多 Interim 累積
-
-### 🐛 發現兩個 Bug
-
-**Bug 1：日誌顯示負數**
-```
-[Content] 🗑️ 分層清理(L2)：清理 343 字，剩餘 -343 字
-```
-
-**Bug 2：多個 Interim 累積**
-- Console 顯示清理了 343 字
-- 但總字數限制是 50 字
-- 顯然有多個 interim 在 buffer 中累積
-
-### 🔍 根本原因分析
-
-**Bug 1 原因：雙重減法**
-```javascript
-// 錯誤的代碼（舊版）
-while (removed < needToRemove && displayBuffer.length > 0) {
-  removed += oldest.text.length;
-  displayBuffer.shift();
-  currentChars -= oldest.text.length;  // ← 已經減了
-}
-
-console.log(`剩餘 ${currentChars - removed} 字`);  // ← 又減一次！
-```
-
-**Bug 2 原因：沒清理舊 Interim**
-```javascript
-// 錯誤的代碼（舊版）
-else {
-  // 新 interim 直接加入
-  displayBuffer.push({
-    text: normalized,
-    timestamp: Date.now(),
-    source: 'interim'
-  });
-  // ⚠️ 但舊的 interim 還在 buffer 裡！
-}
-```
-
-### 🔧 修復方案 (Commit: `5aaef33`)
-
-#### 修復 1：移除重複減法
-```javascript
-// 修正後
-console.log(`[Content] 🗑️ 分層清理(L${layer})：清理 ${removed} 字，剩餘 ${currentChars} 字`);
-// currentChars 已經是清理後的值，不需要再減 removed
-```
-
-#### 修復 2：新增前清理舊 Interim
-```javascript
-// 新增 interim 前，先清理所有舊的 interim
-const oldInterimCount = displayBuffer.filter(item => item.source === 'interim').length;
-if (oldInterimCount > 0) {
-  console.log(`[Content] 🗑️ 清理 ${oldInterimCount} 個舊 interim`);
-  displayBuffer = displayBuffer.filter(item => item.source === 'final');
-}
-
-// 確保 buffer 中最多只有 1 個 interim
-```
-
-### ✅ 修復效果
-- ✅ 日誌數字正確，不再顯示負數
-- ✅ displayBuffer 中最多只有 1 個 interim
-- ✅ 不再出現 343 字的累積問題
-- ✅ 字數嚴格控制在 50 字以內
-
----
-
-## 2025-11-22 下午 - 添加存活計時器監控重啟頻率
-
-### 🎯 需求：監控重啟頻率
-
-**用戶需求**：
-- 想知道語音辨識重啟的頻率
-- 分析是否有異常重啟
-- 了解會話穩定性
-
-### 🔧 實作方案 (Commit: `782e3ef`)
-
-#### 1. 新增監控變數
-```javascript
-let sessionStartTime = null;  // 會話開始時間
-let restartCount = 0;         // 重啟次數
-let lastRestartTime = null;   // 上次重啟時間
-```
-
-#### 2. 會話開始時初始化
-```javascript
-function startRecording(language, autoDetectLang) {
-  if (!sessionStartTime) {
-    sessionStartTime = Date.now();
-    restartCount = 0;
-    lastRestartTime = null;
-    console.log(`[Content] 📊 會話開始，時間: ${new Date().toLocaleTimeString()}`);
-  }
-  // ...
-}
-```
-
-#### 3. 心跳檢查時顯示詳細資訊
-```javascript
-heartbeatTimer = setInterval(() => {
-  const now = Date.now();
-  const timeSinceLastResult = now - lastResultTimestamp;
-  const sessionDuration = sessionStartTime ? Math.round((now - sessionStartTime) / 1000) : 0;
-  const timeSinceLastRestart = lastRestartTime ? Math.round((now - lastRestartTime) / 1000) : 0;
-
-  console.log(
-    `[Content] ⏱️ 心跳檢查：` +
-    `距上次結果 ${Math.round(timeSinceLastResult / 1000)}秒 | ` +
-    `會話時長 ${sessionDuration}秒 | ` +
-    `重啟次數 ${restartCount}次` +
-    (lastRestartTime ? ` | 距上次重啟 ${timeSinceLastRestart}秒` : '')
-  );
-  // ...
-}, HEARTBEAT_INTERVAL);
-```
-
-#### 4. 重啟時記錄統計
-```javascript
-if (timeSinceLastResult > HEARTBEAT_TIMEOUT && isRecording) {
-  restartCount++;
-  lastRestartTime = now;
-
-  console.warn(
-    `[Content] ⚠️ 偵測到可能卡住（${HEARTBEAT_TIMEOUT/1000}秒無結果），第 ${restartCount} 次重啟...` +
-    `\n📊 會話時長：${sessionDuration}秒` +
-    `\n📊 平均重啟間隔：${Math.round(sessionDuration / restartCount)}秒`
-  );
-
-  stopRecording(true);  // 參數 true = 保留會話資訊
-  setTimeout(() => startRecording(lang, auto), 500);
-}
-```
-
-#### 5. 會話結束時顯示總結
-```javascript
-function stopRecording(skipSessionReset = false) {
-  if (!skipSessionReset && sessionStartTime) {
-    const sessionDuration = Math.round((Date.now() - sessionStartTime) / 1000);
-    console.log(
-      `[Content] 📊 會話結束，總時長: ${sessionDuration}秒，重啟次數: ${restartCount}次`
-    );
-    sessionStartTime = null;
-    restartCount = 0;
-    lastRestartTime = null;
-  }
-  // ...
-}
-```
-
-### 📊 Console 日誌範例
-
-```
-[Content] 📊 會話開始，時間: 14:30:25
-[Content] ⏱️ 心跳檢查：距上次結果 1秒 | 會話時長 45秒 | 重啟次數 2次 | 距上次重啟 20秒
-[Content] ⚠️ 偵測到可能卡住（3秒無結果），第 3 次重啟...
-📊 會話時長：60秒
-📊 平均重啟間隔：20秒
-[Content] 📊 會話結束，總時長: 120秒，重啟次數: 5次
-```
-
-### ✅ 功能效果
-- ✅ 即時監控會話時長
-- ✅ 追蹤重啟次數和頻率
-- ✅ 計算平均重啟間隔
-- ✅ 幫助診斷穩定性問題
-
----
-
-## 2025-11-22 下午 - 放寬心跳超時避免誤判重啟
-
-### 🐛 問題描述
-
-用戶測試發現頻繁的重啟問題：
-
-**初始測試（廣告攔截器開啟）**：
-- 194 秒內重啟約 6-7 次
-- 平均每 ~30 秒重啟一次
-- Console 顯示 29 次 `ERR_BLOCKED_BY_CLIENT` 錯誤
-
-**移除廣告攔截器後**：
-- 200 秒內重啟 4 次
-- 平均每 ~50 秒重啟一次
-- 改善 67%，但仍然過於頻繁
-
-### 🔍 根本原因分析
-
-**當前參數**：
-```javascript
-const HEARTBEAT_TIMEOUT = 3000; // 3秒
-```
-
-**問題分析**：
-1. Web Speech API 在處理音訊時，可能有 3-5 秒的自然處理延遲
-2. 這些延遲並非「卡住」，而是正常的語音處理時間
-3. 3 秒超時設定太嚴格，把正常延遲誤判為異常
-4. 導致不必要的重啟，反而影響使用體驗
-
-**用戶觀察**：
-- 廣告攔截器是部分原因（造成 33% 的重啟）
-- 但主要問題是心跳超時設定過於激進
-- 50 秒一次的重啟頻率對字幕體驗影響不大，但可以更好
-
-### 🔧 解決方案
-
-**調整心跳超時時間**：
-```javascript
-const HEARTBEAT_TIMEOUT = 6000; // 從 3 秒調整為 6 秒
-```
-
-**設計考量**：
-- 6 秒給予 API 足夠的處理緩衝時間
-- 仍然能在真正卡住時快速偵測（6 秒算快速反應）
-- 大幅減少誤判導致的不必要重啟
-- 提升整體穩定性和使用體驗
-
-### 📊 預期效果
-
-| 項目 | 舊設定 (3秒) | 新設定 (6秒) |
-|-----|-----------|-----------|
-| **誤判風險** | 高（正常延遲被誤判） | 低（只捕獲真正卡住） |
-| **重啟頻率** | ~50 秒一次 | 預期 > 100 秒一次 |
-| **真正卡住的偵測** | 3 秒後 | 6 秒後（仍算快） |
-| **使用體驗** | 頻繁重啟干擾 | 穩定流暢 |
-
-### 📝 待驗證
-
-- [ ] 測試新設定下的重啟頻率
-- [ ] 確認是否仍能有效捕獲真正的卡住情況
-- [ ] 如果效果不佳，考慮進一步調整或實施連續超時檢測機制
-
-### 🔗 相關提交
-
-- 位置: `extension/content/content.js:33`
-- 變更: `HEARTBEAT_TIMEOUT = 3000` → `HEARTBEAT_TIMEOUT = 6000`
-
----
-
-*最後更新: 2025-11-22*
+*最後更新: 2025-12-05*
