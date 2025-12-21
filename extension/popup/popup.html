@@ -197,6 +197,114 @@
           </div>
         </div>
       </div>
+
+      <!-- Claude 翻譯設定 (雙語字幕功能) -->
+      <div class="claude-section" style="margin-top: 15px;">
+        <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;" id="claude-toggle">
+          <h4 style="margin: 0;">🌐 Claude 翻譯 (雙語字幕)</h4>
+          <span class="toggle-icon">▼</span>
+        </div>
+
+        <div class="claude-content" style="display: none; margin-top: 10px;">
+          <div class="claude-info-box" style="background: #e7f3ff; padding: 10px; border-radius: 4px; margin-bottom: 10px;">
+            <p class="small" style="margin: 0;">
+              💬 <strong>即時翻譯功能</strong><br>
+              使用 Claude 3.5 Haiku 將字幕即時翻譯成目標語言
+            </p>
+          </div>
+
+          <!-- API Key 輸入 -->
+          <div class="api-key-input-group">
+            <label for="claude-api-key" style="display: block; margin-bottom: 5px; font-weight: bold; font-size: 12px;">
+              Claude API Key:
+            </label>
+            <div style="display: flex; gap: 5px;">
+              <input
+                type="password"
+                id="claude-api-key"
+                placeholder="輸入 Claude API Key (sk-ant-...)"
+                style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;"
+              >
+              <button id="save-claude-key" class="small-btn" style="padding: 8px 12px;">
+                💾 儲存
+              </button>
+            </div>
+            <p class="small" style="margin: 5px 0 0 0; color: #666;">
+              <span id="claude-key-status">未設定 Claude API Key</span>
+            </p>
+          </div>
+
+          <!-- 測試按鈕 -->
+          <div style="margin-top: 10px;">
+            <button id="test-claude-btn" class="secondary-btn" style="width: 100%; font-size: 12px;" disabled>
+              🧪 測試 Claude 連接
+            </button>
+          </div>
+
+          <!-- 翻譯設定 -->
+          <div class="translation-settings" style="margin-top: 15px; padding: 10px; background: #f8f9fa; border-radius: 4px;">
+            <h5 style="margin: 0 0 10px 0; font-size: 13px;">翻譯設定</h5>
+
+            <!-- 啟用翻譯 -->
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+              <label for="translation-enabled" style="font-size: 12px; font-weight: bold;">
+                啟用即時翻譯
+              </label>
+              <label class="switch">
+                <input type="checkbox" id="translation-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <!-- 目標語言選擇 -->
+            <div style="margin-bottom: 10px;">
+              <label for="target-language" style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: bold;">
+                翻譯目標語言:
+              </label>
+              <select id="target-language" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
+                <option value="zh-TW">繁體中文</option>
+                <option value="zh-CN">簡體中文</option>
+                <option value="en">英文</option>
+                <option value="ja">日文</option>
+                <option value="ko">韓文</option>
+                <option value="es">西班牙文</option>
+                <option value="fr">法文</option>
+                <option value="de">德文</option>
+              </select>
+            </div>
+
+            <!-- 翻譯統計 -->
+            <div id="translation-stats" style="display: none; margin-top: 10px; padding: 8px; background: white; border-radius: 4px; font-size: 11px;">
+              <div style="font-weight: bold; margin-bottom: 5px;">📊 翻譯統計</div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px;">
+                <div>總翻譯數: <span id="stat-total">0</span></div>
+                <div>快取命中: <span id="stat-cache-hits">0</span></div>
+                <div>API 呼叫: <span id="stat-api-calls">0</span></div>
+                <div>命中率: <span id="stat-hit-rate">0%</span></div>
+                <div style="grid-column: 1 / -1;">
+                  預估成本: <span id="stat-cost">$0.0000 USD</span>
+                </div>
+              </div>
+              <button id="clear-translation-cache" class="small-btn" style="width: 100%; margin-top: 8px; font-size: 11px;">
+                🗑️ 清除翻譯快取
+              </button>
+            </div>
+          </div>
+
+          <!-- 使用說明 -->
+          <div class="note-box" style="margin-top: 10px;">
+            <p class="small" style="margin: 0;">
+              📖 <strong>如何取得 Claude API Key：</strong><br>
+              1. 前往 <a href="https://console.anthropic.com/" target="_blank">Anthropic Console</a><br>
+              2. 建立 API Key（以 sk-ant- 開頭）<br>
+              3. 複製並貼上 API Key<br>
+              <br>
+              💰 <strong>成本估計：</strong><br>
+              Claude 3.5 Haiku 每小時約 $0.08 USD
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- 版本資訊 -->

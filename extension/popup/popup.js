@@ -6,6 +6,11 @@ let isRecording = false;
 let currentEngine = 'webspeech'; // 'webspeech' 或 'deepgram'
 let hasDeepgramApiKey = false;
 
+// Claude 翻譯設定
+let hasClaudeApiKey = false;
+let translationEnabled = false;
+let targetLanguage = 'zh-TW';
+
 // DOM 元素
 const statusIndicator = document.getElementById('status-indicator');
 const statusText = document.getElementById('status-text');
@@ -40,6 +45,9 @@ async function init() {
 
   // 初始化 Deepgram UI
   await initDeepgramUI();
+
+  // 初始化 Claude 翻譯 UI
+  await initClaudeTranslationUI();
 
   // 開始狀態輪詢
   startStatusPolling();
@@ -691,6 +699,291 @@ async function initDeepgramUI() {
     const hasValue = apiKeyInput.value.trim().length > 0;
     const isMasked = apiKeyInput.getAttribute('data-masked') === 'true';
     testBtn.disabled = !(hasValue || isMasked);
+  });
+}
+
+// ============================================
+// Claude 翻譯 UI 初始化
+// ============================================
+
+/**
+ * 初始化 Claude 翻譯 UI（使用加密）
+ */
+async function initClaudeTranslationUI() {
+  const toggleBtn = document.getElementById('claude-toggle');
+  const content = document.querySelector('.claude-content');
+  const saveKeyBtn = document.getElementById('save-claude-key');
+  const apiKeyInput = document.getElementById('claude-api-key');
+  const testBtn = document.getElementById('test-claude-btn');
+  const keyStatus = document.getElementById('claude-key-status');
+  const translationEnabledCheckbox = document.getElementById('translation-enabled');
+  const targetLanguageSelect = document.getElementById('target-language');
+  const translationStatsDiv = document.getElementById('translation-stats');
+  const clearCacheBtn = document.getElementById('clear-translation-cache');
+  const clearKeyBtn = document.createElement('button');
+
+  // 初始化加密管理器
+  const crypto = window.cryptoManager;
+  await crypto.initialize();
+
+  // 可折疊區域
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+      const isHidden = content.style.display === 'none';
+      content.style.display = isHidden ? 'block' : 'none';
+      toggleBtn.querySelector('.toggle-icon').textContent = isHidden ? '▲' : '▼';
+    });
+  }
+
+  // 載入已儲存的 Claude API Key（加密版本）
+  try {
+    const apiKey = await crypto.getClaudeApiKey();
+
+    if (apiKey) {
+      hasClaudeApiKey = true;
+
+      // 顯示遮罩版本
+      apiKeyInput.value = crypto.maskApiKey(apiKey);
+      apiKeyInput.setAttribute('data-masked', 'true');
+      apiKeyInput.type = 'text';
+
+      keyStatus.textContent = '✅ Claude API Key 已設定（🔒加密）';
+      keyStatus.style.color = '#28a745';
+      testBtn.disabled = false;
+
+      // 添加清除按鈕
+      clearKeyBtn.textContent = '🗑️ 清除';
+      clearKeyBtn.className = 'small-btn';
+      clearKeyBtn.style.marginLeft = '5px';
+      saveKeyBtn.parentElement.appendChild(clearKeyBtn);
+    }
+  } catch (error) {
+    console.error('[Popup] 載入 Claude API Key 失敗:', error);
+  }
+
+  // 載入翻譯設定
+  const settings = await new Promise((resolve) => {
+    chrome.storage.sync.get(['translationEnabled', 'targetLanguage'], resolve);
+  });
+
+  translationEnabled = settings.translationEnabled || false;
+  targetLanguage = settings.targetLanguage || 'zh-TW';
+
+  translationEnabledCheckbox.checked = translationEnabled;
+  targetLanguageSelect.value = targetLanguage;
+
+  // 如果翻譯已啟用，顯示統計資訊
+  if (translationEnabled && hasClaudeApiKey) {
+    loadTranslationStats();
+  }
+
+  // 輸入框獲得焦點時清除遮罩
+  apiKeyInput.addEventListener('focus', () => {
+    if (apiKeyInput.getAttribute('data-masked') === 'true') {
+      apiKeyInput.value = '';
+      apiKeyInput.type = 'password';
+      apiKeyInput.removeAttribute('data-masked');
+      apiKeyInput.placeholder = '輸入新的 Claude API Key 或留空保留現有';
+    }
+  });
+
+  // 儲存 Claude API Key（加密）
+  saveKeyBtn.addEventListener('click', async () => {
+    const apiKey = apiKeyInput.value.trim();
+
+    if (!apiKey) {
+      alert('請輸入 Claude API Key');
+      return;
+    }
+
+    // 驗證格式
+    if (!crypto.validateClaudeApiKeyFormat(apiKey)) {
+      alert('Claude API Key 格式無效\n\n格式應為：sk-ant-...\n長度至少 50 字元');
+      return;
+    }
+
+    try {
+      saveKeyBtn.disabled = true;
+      saveKeyBtn.textContent = '💾 儲存中...';
+
+      // 使用加密管理器儲存
+      await crypto.saveClaudeApiKey(apiKey);
+
+      hasClaudeApiKey = true;
+
+      // 更新 UI
+      apiKeyInput.value = crypto.maskApiKey(apiKey);
+      apiKeyInput.setAttribute('data-masked', 'true');
+      apiKeyInput.type = 'text';
+
+      keyStatus.textContent = '✅ Claude API Key 已加密儲存';
+      keyStatus.style.color = '#28a745';
+      testBtn.disabled = false;
+
+      // 添加清除按鈕
+      if (!clearKeyBtn.parentElement) {
+        saveKeyBtn.parentElement.appendChild(clearKeyBtn);
+      }
+
+      alert('Claude API Key 已加密儲存！\n\n🔒 使用 AES-GCM-256 加密');
+
+    } catch (error) {
+      alert(`儲存失敗：${error.message}`);
+    } finally {
+      saveKeyBtn.disabled = false;
+      saveKeyBtn.textContent = '💾 儲存';
+    }
+  });
+
+  // 清除 Claude API Key
+  clearKeyBtn.addEventListener('click', async () => {
+    if (!confirm('確定要清除 Claude API Key 嗎？\n\n清除後將無法使用翻譯功能。')) {
+      return;
+    }
+
+    try {
+      await crypto.clearClaudeApiKey();
+
+      hasClaudeApiKey = false;
+
+      apiKeyInput.value = '';
+      apiKeyInput.type = 'password';
+      apiKeyInput.placeholder = '輸入 Claude API Key (sk-ant-...)';
+      apiKeyInput.removeAttribute('data-masked');
+
+      keyStatus.textContent = '未設定 Claude API Key';
+      keyStatus.style.color = '#666';
+      testBtn.disabled = true;
+
+      // 如果翻譯已啟用，自動停用
+      if (translationEnabled) {
+        translationEnabledCheckbox.checked = false;
+        translationEnabled = false;
+        await chrome.storage.sync.set({ translationEnabled: false });
+      }
+
+      translationStatsDiv.style.display = 'none';
+      clearKeyBtn.remove();
+      alert('Claude API Key 已清除');
+    } catch (error) {
+      alert(`清除失敗：${error.message}`);
+    }
+  });
+
+  // 測試 Claude 連接
+  testBtn.addEventListener('click', async () => {
+    try {
+      const apiKey = await crypto.getClaudeApiKey();
+
+      if (!apiKey) {
+        alert('請先儲存 Claude API Key');
+        return;
+      }
+
+      testBtn.disabled = true;
+      testBtn.textContent = '🔄 測試中...';
+      keyStatus.textContent = '測試連接中...';
+      keyStatus.style.color = '#ffc107';
+
+      chrome.runtime.sendMessage({
+        action: 'testClaudeConnection'
+      }, (response) => {
+        testBtn.disabled = false;
+        testBtn.textContent = '🧪 測試 Claude 連接';
+
+        if (response && response.success) {
+          keyStatus.textContent = '✅ Claude 連接成功！';
+          keyStatus.style.color = '#28a745';
+          alert('Claude API 連接測試成功！✅\n\n可以開始使用翻譯功能。');
+        } else {
+          keyStatus.textContent = '❌ 連接失敗';
+          keyStatus.style.color = '#dc3545';
+          alert(`連接失敗：${response?.error || '未知錯誤'}\n\n請檢查 API Key 是否正確。`);
+        }
+      });
+    } catch (error) {
+      testBtn.disabled = false;
+      testBtn.textContent = '🧪 測試 Claude 連接';
+      alert(`測試失敗：${error.message}`);
+    }
+  });
+
+  // 啟用/停用翻譯
+  translationEnabledCheckbox.addEventListener('change', async () => {
+    const enabled = translationEnabledCheckbox.checked;
+
+    // 檢查是否有 API Key
+    if (enabled && !hasClaudeApiKey) {
+      translationEnabledCheckbox.checked = false;
+      alert('⚠️ 請先設定 Claude API Key\n\n請在上方輸入您的 Claude API Key');
+      return;
+    }
+
+    translationEnabled = enabled;
+    await chrome.storage.sync.set({ translationEnabled: enabled });
+
+    console.log('[Popup] 翻譯功能', enabled ? '已啟用' : '已停用');
+
+    // 顯示/隱藏統計資訊
+    if (enabled) {
+      translationStatsDiv.style.display = 'block';
+      loadTranslationStats();
+    } else {
+      translationStatsDiv.style.display = 'none';
+    }
+  });
+
+  // 更改目標語言
+  targetLanguageSelect.addEventListener('change', async () => {
+    targetLanguage = targetLanguageSelect.value;
+    await chrome.storage.sync.set({ targetLanguage });
+    console.log('[Popup] 目標語言已更改為:', targetLanguage);
+  });
+
+  // 清除翻譯快取
+  clearCacheBtn.addEventListener('click', () => {
+    if (!confirm('確定要清除翻譯快取嗎？\n\n這會清除所有已快取的翻譯，下次翻譯相同內容時會重新呼叫 API。')) {
+      return;
+    }
+
+    chrome.runtime.sendMessage({
+      action: 'clearTranslationCache'
+    }, (response) => {
+      if (response && response.success) {
+        alert('翻譯快取已清除！');
+        loadTranslationStats(); // 重新載入統計
+      } else {
+        alert('清除快取失敗');
+      }
+    });
+  });
+
+  // 監聽輸入變化
+  apiKeyInput.addEventListener('input', () => {
+    const hasValue = apiKeyInput.value.trim().length > 0;
+    const isMasked = apiKeyInput.getAttribute('data-masked') === 'true';
+    testBtn.disabled = !(hasValue || isMasked);
+  });
+}
+
+/**
+ * 載入翻譯統計資訊
+ */
+function loadTranslationStats() {
+  chrome.runtime.sendMessage({
+    action: 'getTranslationStats'
+  }, (response) => {
+    if (response && response.success && response.stats) {
+      const stats = response.stats;
+
+      document.getElementById('stat-total').textContent = stats.totalTranslations || 0;
+      document.getElementById('stat-cache-hits').textContent = stats.cacheHits || 0;
+      document.getElementById('stat-api-calls').textContent = stats.apiCalls || 0;
+      document.getElementById('stat-hit-rate').textContent = stats.cacheHitRate || '0%';
+      document.getElementById('stat-cost').textContent = stats.estimatedCostFormatted || '$0.0000 USD';
+
+      document.getElementById('translation-stats').style.display = 'block';
+    }
   });
 }
 
