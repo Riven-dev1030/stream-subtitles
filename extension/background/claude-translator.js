@@ -263,8 +263,12 @@ ${text}`;
    */
   static async validateApiKey(apiKey) {
     if (!apiKey || apiKey.trim().length === 0) {
+      console.error('[Claude Translator] API Key 為空');
       return false;
     }
+
+    console.log('[Claude Translator] 開始驗證 API Key...');
+    console.log('[Claude Translator] API Key 格式:', apiKey.substring(0, 10) + '...');
 
     try {
       // 發送一個簡單的測試請求
@@ -287,9 +291,33 @@ ${text}`;
         })
       });
 
-      return response.ok;
+      console.log('[Claude Translator] API 回應狀態:', response.status, response.statusText);
+
+      if (response.ok) {
+        console.log('[Claude Translator] ✅ API Key 驗證成功');
+        return true;
+      } else {
+        // 嘗試讀取錯誤訊息
+        let errorMessage = `HTTP ${response.status}`;
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error?.message || errorData.message || errorMessage;
+          console.error('[Claude Translator] API 錯誤:', errorData);
+        } catch (e) {
+          const errorText = await response.text();
+          console.error('[Claude Translator] API 錯誤文字:', errorText);
+        }
+
+        console.error('[Claude Translator] ❌ API Key 驗證失敗:', errorMessage);
+        return false;
+      }
     } catch (error) {
-      console.error('[Claude Translator] API Key 驗證失敗:', error);
+      console.error('[Claude Translator] ❌ 網路請求失敗:', error);
+      console.error('[Claude Translator] 錯誤詳情:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
       return false;
     }
   }
