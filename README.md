@@ -489,8 +489,8 @@ chrome://extensions/ → Stream-Subtitles → 「Service Worker」連結
 ### Q7: Claude 翻譯準確度如何？
 
 **現狀** (Phase 3.1):
-- 使用 Claude 3.5 Haiku 模型進行翻譯
-- 翻譯準度：**一般水平**（約 70-80%）
+- 使用 Claude 4.5 Haiku 模型進行翻譯
+- 翻譯準度：**良好水平**（約 80-90%）
 - 速度：**快**（Haiku 優先考慮延遲）
 
 **準度說明**：
