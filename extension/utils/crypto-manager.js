@@ -181,7 +181,7 @@ class CryptoManager {
   }
 
   /**
-   * 儲存加密的 API Key
+   * 儲存加密的 Deepgram API Key
    * @param {string} apiKey - 明文 API Key
    * @returns {Promise<void>}
    */
@@ -195,7 +195,7 @@ class CryptoManager {
         apiKeySetAt: Date.now()
       });
 
-      console.log('[CryptoManager] API Key 已加密並儲存');
+      console.log('[CryptoManager] Deepgram API Key 已加密並儲存');
     } catch (error) {
       console.error('[CryptoManager] 儲存失敗:', error);
       throw error;
@@ -203,7 +203,7 @@ class CryptoManager {
   }
 
   /**
-   * 讀取並解密 API Key
+   * 讀取並解密 Deepgram API Key
    * @returns {Promise<string|null>} 明文 API Key，如果不存在則返回 null
    */
   async getApiKey() {
@@ -234,7 +234,7 @@ class CryptoManager {
   }
 
   /**
-   * 刪除 API Key
+   * 刪除 Deepgram API Key
    * @returns {Promise<void>}
    */
   async clearApiKey() {
@@ -243,7 +243,73 @@ class CryptoManager {
       'apiKeyEncrypted',
       'apiKeySetAt'
     ]);
-    console.log('[CryptoManager] API Key 已清除');
+    console.log('[CryptoManager] Deepgram API Key 已清除');
+  }
+
+  /**
+   * 儲存加密的 Claude API Key
+   * @param {string} apiKey - 明文 API Key
+   * @returns {Promise<void>}
+   */
+  async saveClaudeApiKey(apiKey) {
+    try {
+      const encrypted = await this.encrypt(apiKey);
+
+      await chrome.storage.local.set({
+        claudeApiKey: encrypted,
+        claudeApiKeyEncrypted: true,
+        claudeApiKeySetAt: Date.now()
+      });
+
+      console.log('[CryptoManager] Claude API Key 已加密並儲存');
+    } catch (error) {
+      console.error('[CryptoManager] 儲存 Claude API Key 失敗:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 讀取並解密 Claude API Key
+   * @returns {Promise<string|null>} 明文 API Key，如果不存在則返回 null
+   */
+  async getClaudeApiKey() {
+    try {
+      const result = await chrome.storage.local.get([
+        'claudeApiKey',
+        'claudeApiKeyEncrypted'
+      ]);
+
+      if (!result.claudeApiKey) {
+        return null;
+      }
+
+      // 檢查是否為加密資料
+      if (result.claudeApiKeyEncrypted) {
+        // 解密
+        return await this.decrypt(result.claudeApiKey);
+      } else {
+        // 舊版明文資料，重新加密
+        console.warn('[CryptoManager] 偵測到明文 Claude API Key，正在重新加密...');
+        await this.saveClaudeApiKey(result.claudeApiKey);
+        return result.claudeApiKey;
+      }
+    } catch (error) {
+      console.error('[CryptoManager] 讀取 Claude API Key 失敗:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 刪除 Claude API Key
+   * @returns {Promise<void>}
+   */
+  async clearClaudeApiKey() {
+    await chrome.storage.local.remove([
+      'claudeApiKey',
+      'claudeApiKeyEncrypted',
+      'claudeApiKeySetAt'
+    ]);
+    console.log('[CryptoManager] Claude API Key 已清除');
   }
 
   /**
@@ -262,7 +328,7 @@ class CryptoManager {
   }
 
   /**
-   * 驗證 API Key 格式
+   * 驗證 Deepgram API Key 格式
    * @param {string} apiKey - API Key
    * @returns {boolean} 是否有效
    */
@@ -274,6 +340,32 @@ class CryptoManager {
 
     // 基本長度檢查
     if (apiKey.length < 20) {
+      return false;
+    }
+
+    // 檢查是否包含不合法字元
+    const validPattern = /^[a-zA-Z0-9_-]+$/;
+    return validPattern.test(apiKey);
+  }
+
+  /**
+   * 驗證 Claude API Key 格式
+   * @param {string} apiKey - API Key
+   * @returns {boolean} 是否有效
+   */
+  validateClaudeApiKeyFormat(apiKey) {
+    // Claude API Key 格式：sk-ant-api03-... (約 100+ 字元)
+    if (!apiKey || typeof apiKey !== 'string') {
+      return false;
+    }
+
+    // Claude API Key 通常以 sk-ant- 開頭
+    if (!apiKey.startsWith('sk-ant-')) {
+      return false;
+    }
+
+    // 基本長度檢查（Claude API Key 通常很長）
+    if (apiKey.length < 50) {
       return false;
     }
 
