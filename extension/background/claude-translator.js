@@ -1,17 +1,17 @@
 /**
  * Claude Translator Client
  *
- * 使用 Claude 3.5 Haiku API 進行即時翻譯
+ * 使用 Claude 4.5 Haiku API 進行即時翻譯
  *
  * @class ClaudeTranslator
- * @version 1.0.0
+ * @version 1.1.0
  */
 
 class ClaudeTranslator {
   constructor(apiKey, config = {}) {
     this.apiKey = apiKey;
     this.config = {
-      model: config.model || 'claude-3-5-haiku-20241022',
+      model: config.model || 'claude-haiku-4-5-20251001',
       maxTokens: config.maxTokens || 1024,
       temperature: config.temperature || 0.3, // 較低溫度以獲得更一致的翻譯
       ...config
@@ -197,7 +197,7 @@ ${text}`;
   _calculateRequestCost(usage) {
     if (!usage) return 0;
 
-    // Claude 3.5 Haiku 定價（2025）
+    // Claude 4.5 Haiku 定價（2025）
     const inputCostPerMToken = 0.8;  // $0.80 per MTok
     const outputCostPerMToken = 4.0; // $4.00 per MTok
 
@@ -276,7 +276,7 @@ ${text}`;
           'content-type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'claude-3-5-haiku-20241022',
+          model: 'claude-haiku-4-5-20251001',
           max_tokens: 10,
           messages: [
             {
