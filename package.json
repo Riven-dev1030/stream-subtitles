@@ -1,7 +1,7 @@
 {
   "name": "stream-subtitles",
-  "version": "1.0.0",
-  "description": "Real-time subtitle generation Chrome Extension",
+  "version": "2.0.0",
+  "description": "Chrome Extension for real-time subtitle generation, transcription, and bilingual translation using Web Speech API, Deepgram, and Claude AI",
   "scripts": {
     "test": "jest",
     "test:watch": "jest --watch",

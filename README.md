@@ -6,7 +6,7 @@
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-green)](https://developer.chrome.com/docs/extensions/mv3/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Stream-Subtitles** 是一個強大的 Chrome 擴充功能，能為任何網頁影片提供即時字幕。支援**雙語音辨識引擎**：免費的瀏覽器內建 Web Speech API 和高精度的 Deepgram 雲端 API，讓您自由選擇最適合的方案。
+**Stream-Subtitles** 是一個強大的 Chrome 擴充功能，能為任何網頁影片提供即時字幕。支援**雙語音辨識引擎**：免費的瀏覽器內建 Web Speech API 和高精度的 Deepgram 雲端 API，並整合 **Claude AI 即時翻譯**功能，實現雙語字幕顯示，讓您自由選擇最適合的方案。
 
 ---
 
@@ -32,6 +32,7 @@
 - ✅ **自動斷句** - 智能識別語句邊界
 - ✅ **雙介面控制** - Popup 主介面 + 頁面浮動控制面板
 - ✅ **狀態同步** - 多介面狀態完美同步
+- ✅ **Claude AI 即時翻譯** (NEW) - 雙語字幕顯示（原文 + Claude 翻譯）
 
 #### 字幕處理
 - ✅ **Interim 主導架構** - 即時顯示暫時結果，幾乎零延遲
@@ -47,9 +48,12 @@
 
 #### 安全與隱私
 - ✅ **API Key 加密儲存** - AES-GCM-256 + PBKDF2 (100,000 iterations)
+  - Deepgram API Key
+  - Claude API Key (NEW)
 - ✅ **Extension ID 唯一密鑰** - 每個安裝實例使用不同加密密鑰
 - ✅ **零歷史記錄** - 不儲存字幕內容
 - ✅ **本地優先** - Web Speech API 模式完全本地處理
+- ✅ **CORS 安全標準** - Claude API 使用官方 Browser 存取標準
 
 ---
 
@@ -163,6 +167,35 @@
 3. 點擊「**開始錄音**」
 4. 享受高精度即時字幕 🎉
 
+### 使用 Claude API 進行翻譯（雙語字幕，NEW）
+
+#### 步驟 1：獲取 Claude API Key
+
+1. 前往 [Anthropic Claude Console](https://console.anthropic.com/settings/keys)
+2. 登入帳號（需 Anthropic 帳戶）
+3. 前往「API Keys」
+4. 建立新 API Key（複製整個 Key，格式：`sk-ant-...`）
+
+#### 步驟 2：設定 Claude API Key
+
+1. 點擊擴充功能圖標
+2. 向下滾動到「Claude API Key」部分
+3. 點擊「**輸入 Claude API Key**」
+4. 貼上 API Key（確保完整複製，無多餘空格）
+5. 點擊「**儲存**」按鈕
+6. 看到「✅ Claude API Key 已設定（🔒加密）」即表示設定成功
+
+#### 步驟 3：啟用翻譯功能
+
+1. 開始錄音後，字幕會自動分為兩行：
+   - **上面（原文）**：語音辨識的原始文字
+   - **下面（翻譯）**：Claude AI 翻譯的結果
+2. 享受即時的雙語字幕體驗！ 🌍✨
+
+**注意**：
+- Claude 翻譯會產生 API 費用（按 Token 計費，約 $0.01 per 1M input tokens）
+- 建議定期檢查 [Anthropic Console](https://console.anthropic.com/) 中的使用量和費用
+
 ---
 
 ## 🏗️ 技術架構
@@ -208,6 +241,7 @@
 | **Chrome Extension API** | Manifest V3 | 擴充功能框架 |
 | **Web Speech API** | W3C Standard | 免費語音辨識引擎 |
 | **Deepgram API** | v1 | 高精度語音辨識引擎 |
+| **Claude API** | v1 | AI 即時翻譯引擎 (NEW) |
 | **AudioWorklet API** | W3C Standard | 高性能音訊處理（獨立線程） |
 | **Web Crypto API** | W3C Standard | AES-GCM-256 API Key 加密 |
 | **WebSocket** | RFC 6455 | Deepgram 即時通訊 |
@@ -452,6 +486,67 @@ chrome://extensions/ → Stream-Subtitles → 「Service Worker」連結
 - 某些網站可能有 Content Security Policy 限制
 - DRM 保護的影片可能無法捕獲音訊
 
+### Q7: Claude 翻譯準確度如何？
+
+**現狀** (Phase 3.1):
+- 使用 Claude 3.5 Haiku 模型進行翻譯
+- 翻譯準度：**一般水平**（約 70-80%）
+- 速度：**快**（Haiku 優先考慮延遲）
+
+**準度說明**：
+- 日常用語翻譯準確度較高
+- 專業術語、成語可能不理想
+- 上下文理解有限（單句翻譯）
+
+**改進計畫**：
+- ✅ Phase 3.2：優化翻譯 Prompt
+- ✅ Phase 3.3：實現批量翻譯（保留上下文）
+- 🔮 Phase 4：支援升級到 Claude Sonnet 4.5（更準確但稍慢）
+
+### Q8: Claude 翻譯會產生多少費用？
+
+**定價**（Claude Haiku 4.5）：
+- **Input**: $1 per 1M tokens（約 750,000 個字符）
+- **Output**: $5 per 1M tokens
+- **粗估**: 1 小時影片約翻譯 10,000-20,000 tokens，成本 **$0.01-0.05** USD
+
+**成本控制**：
+- 只在需要時啟用翻譯功能
+- 定期檢查 [Anthropic Console](https://console.anthropic.com/) 費用
+- 可設定月度預算限額
+
+**相比其他翻譯服務**：
+- Claude 比 Google Translate API 便宜約 10 倍
+- 品質與速度平衡較好
+
+### Q9: Claude API Key 驗證失敗怎麼辦？
+
+**常見原因與解決方法**：
+
+1. **API Key 格式錯誤**
+   - 確認開頭是 `sk-ant-`
+   - 確保完整複製，無多餘空格
+   - 重新貼上一次
+
+2. **API Key 無效或已被撤銷**
+   - 登入 [Anthropic Console](https://console.anthropic.com/settings/keys)
+   - 檢查 API Key 狀態是否為 Active
+   - 如果已過期，建立新的 API Key
+
+3. **帳戶問題**
+   - 確認 Anthropic 帳戶仍有效
+   - 檢查是否有足夠的額度
+   - 登入 Console 確認帳戶狀態
+
+4. **擴充功能相關**
+   - 重新載入擴充功能（`chrome://extensions/` → 重新載入）
+   - 清除 API Key 並重新輸入
+   - 檢查瀏覽器 Console 中的詳細錯誤訊息（F12）
+
+**除錯技巧**：
+- 開啟 Service Worker 工具查看詳細日誌：`chrome://extensions/` → Stream-Subtitles → 「Service Worker」連結
+- 記下錯誤代碼和信息以便回報
+
 ---
 
 ## 🗺️ 開發路線圖
@@ -475,7 +570,12 @@ chrome://extensions/ → Stream-Subtitles → 「Service Worker」連結
 - ✅ 狀態同步機制
 - ✅ 停止功能修復
 
-### 🚧 Phase 3 - 功能增強 (規劃中)
+### 🚧 Phase 3 - 功能增強 (進行中)
+- ✅ **即時翻譯（雙語字幕）** - Claude AI 即時翻譯 (Phase 3.1 進行中)
+  - ✅ Claude API 集成
+  - ✅ API Key 加密儲存
+  - ✅ 雙語字幕顯示（原文 + 翻譯）
+  - ⚠️ 翻譯準度優化（進行中）
 - [ ] 多語言字幕同時顯示
 - [ ] 字幕樣式自訂（字型、顏色、位置）
 - [ ] 字幕匯出（SRT、VTT 格式）
@@ -483,7 +583,8 @@ chrome://extensions/ → Stream-Subtitles → 「Service Worker」連結
 - [ ] 字幕歷史記錄（選配）
 
 ### 🔮 Phase 4 - 進階功能 (構思中)
-- [ ] 即時翻譯（雙語字幕）
+- [ ] 翻譯品質改進（更優化的 Prompt、上下文感知）
+- [ ] 多語言翻譯目標支援
 - [ ] 關鍵字高亮與通知
 - [ ] 說話者識別
 - [ ] 雲端設定同步

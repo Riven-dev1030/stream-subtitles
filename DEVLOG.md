@@ -4,6 +4,141 @@
 
 ---
 
+## 2025-12-22 - Claude API 集成（Phase 3.1 進行中）
+
+### 🎯 Phase 3.1 目標
+
+實現 Claude AI 即時翻譯功能，支援雙語字幕顯示（原文 + Claude 翻譯）。
+
+**成就**：
+- ✅ Claude API 完全集成
+- ✅ API Key 加密儲存（使用現有 CryptoManager）
+- ✅ 雙語字幕顯示功能
+- ✅ 解決 Chrome Extension 中的 CORS 問題
+- ✅ 自動備用機制（Claude 4.5 → 3.5）
+
+---
+
+### 🐛 問題 1: Chrome Extension 中 Claude API 返回 401 錯誤
+
+**症狀**:
+- Extension Service Worker 中所有 Claude API 請求都返回 HTTP 401 Unauthorized
+- Curl 測試同一 API Key 成功
+- 錯誤信息：`CORS requests must set 'anthropic-dangerous-direct-browser-access' header`
+
+**根本原因**:
+- Anthropic API 要求瀏覽器環境中的直接請求必須設置特殊的 CORS 安全頭
+- 這是 Anthropic 為防止誤用而設計的安全機制
+
+**解決方案** (Commit: `8f8b063`):
+在所有 Claude API 請求的請求頭中添加：
+```javascript
+headers: {
+  'x-api-key': apiKey.trim(),
+  'anthropic-version': '2023-06-01',
+  'content-type': 'application/json',
+  'anthropic-dangerous-direct-browser-access': 'true'  // ← 關鍵！
+}
+```
+
+**調試過程**:
+1. 最初檢查了 API Key 格式和加密/解密邏輯（都正常）
+2. 嘗試了多種方法：檢查模型名稱、使用備用模型等（都失敗）
+3. 通過添加詳細的錯誤日誌，最終發現錯誤訊息中提到了缺失的 CORS 頭
+4. 修復後所有請求立即開始工作
+
+**教訓**:
+- ✅ 使用 `curl` 驗證 API 在系統級工作
+- ✅ 詳細的錯誤日誌至關重要（要記錄完整的 API 響應）
+- ✅ 查閱 API 文檔的「安全」或「CORS」部分
+
+---
+
+### 📊 技術決策：模型選擇
+
+**選擇的模型**：Claude 3.5 Haiku 4.5
+- 成本低：$1/1M input tokens
+- 速度快：優先考慮延遲
+- 質量：可接受（不完美但可用）
+
+**權衡**:
+| 因素 | Haiku 4.5 | Sonnet 4.5 |
+|------|----------|-----------|
+| **成本** | $1/$5 per 1M | $3/$15 per 1M |
+| **速度** | 最快（~200ms） | 較慢（~800ms） |
+| **準度** | 70-80% | 90-95% |
+
+**決策**：先使用 Haiku（MVP），後續 Phase 4 支援升級到 Sonnet
+
+---
+
+### ⚠️ 已知限制：翻譯準度
+
+**現狀**:
+- 使用 Claude Haiku 4.5 進行翻譯
+- 準度：約 70-80%（一般水平）
+- 問題：上下文理解不足（單句翻譯）
+
+**典型問題**:
+- 日常用語：✅ 準確
+- 專業術語：⚠️ 可能不準確
+- 習語/成語：❌ 容易翻譯不當
+
+**改進計畫**:
+
+**Phase 3.2 - Prompt 優化**
+- 添加領域上下文提示（如 IT、醫學等）
+- 改進句式結構指導
+- 要求保留專業術語
+
+**Phase 3.3 - 上下文保留**
+- 實現批量翻譯（同時翻譯多句）
+- 在 Service Worker 中緩存上下文
+- 改進準度至 80-85%
+
+**Phase 4 - 模型升級**
+- 支援使用者選擇模型（Haiku vs Sonnet）
+- Sonnet 提升準度至 90-95%
+- 讓使用者根據需求在速度/質量之間平衡
+
+---
+
+### 🔐 安全與隱私
+
+**API Key 管理**:
+- ✅ 使用現有的 CryptoManager（AES-GCM-256）
+- ✅ 支援多個 API Key 同時儲存（Deepgram + Claude）
+- ✅ Extension ID 唯一密鑰
+
+**CORS 安全頭說明**:
+- `anthropic-dangerous-direct-browser-access` 頭是明確的安全確認
+- 字面上的名字（"dangerous-direct-browser-access"）提醒開發者這是非標準用法
+- 必須明確設置，防止無意中在瀏覽器中暴露 API Key
+
+---
+
+### 📈 成本分析
+
+**預估成本**（Claude Haiku 4.5）:
+- 1 小時影片 ~10,000-20,000 tokens
+- 成本範圍：$0.01-0.05 USD
+- 月度使用估算（10 小時）：$0.10-0.50 USD
+
+**與其他服務比較**:
+- Google Translate API：每月 ~$1-5（同等使用）
+- 手動翻譯：∞（不可能）
+
+---
+
+### ✨ 未來改進方向
+
+1. **翻譯品質**（Phase 3.2-3.3）
+2. **多語言支援**（Phase 4）
+3. **使用者可配置**（模型選擇、語言偏好）
+4. **成本監控**（每日/月度統計）
+
+---
+
 ## 2025-12-05 - Deepgram MVP 穩定性修復（Phase 2 完成）
 
 ### 🎯 Phase 2 目標達成

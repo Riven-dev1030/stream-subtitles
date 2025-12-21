@@ -23,20 +23,36 @@ This document provides comprehensive guidance for AI assistants working with the
 The `stream-subtitles` project handles real-time subtitle generation, processing, and/or streaming for video content.
 
 ### Tech Stack
-*[To be updated as project develops]*
 
-**Expected components:**
-- Language/Runtime: [e.g., Node.js, Python, Go]
-- Frameworks: [e.g., Express, FastAPI, etc.]
-- Subtitle formats: [e.g., SRT, WebVTT, ASS]
-- Streaming protocols: [e.g., WebSocket, HLS, RTMP]
-- Dependencies: [List major dependencies]
+**Architecture:**
+- **Platform**: Chrome Extension (Manifest V3)
+- **Language/Runtime**: JavaScript (ES6+)
+- **Audio Input**: Web Audio API + Tab Capture API
+
+**Recognition Engines:**
+- **Web Speech API**: Built-in browser recognition (free)
+- **Deepgram API**: Cloud-based recognition via WebSocket (high accuracy)
+- **Claude API**: Real-time translation (Anthropic Claude 4.5 Haiku)
+
+**Key Components:**
+- Service Worker (background processing and message routing)
+- Content Script (subtitle display and DOM injection)
+- Offscreen Document (audio processing)
+- Popup UI (user controls and configuration)
+- CryptoManager (AES-GCM-256 encryption for API keys)
+
+**APIs Used:**
+- Deepgram WebSocket API (`wss://api.deepgram.com/v1/listen`)
+- Anthropic Claude API (`https://api.anthropic.com/v1/messages`)
 
 ### Project Goals
-- Real-time subtitle generation and/or processing
-- Support for multiple subtitle formats
-- Stream integration capabilities
-- [Add specific goals as they become clear]
+- **Real-time Subtitles**: Provide low-latency, streaming subtitles for video content
+- **Multi-Engine Support**: Support both Web Speech API and Deepgram with easy switching
+- **Bilingual Output**: Real-time translation with Claude API for Chinese, English, Japanese, etc.
+- **User-Friendly**: Simple, intuitive UI with one-click activation
+- **Security**: Encrypted API key storage with PBKDF2 + AES-GCM-256
+- **Performance**: Minimal browser performance impact, efficient caching
+- **Accessibility**: Support for hearing-impaired users and language learners
 
 ---
 
@@ -44,38 +60,61 @@ The `stream-subtitles` project handles real-time subtitle generation, processing
 
 ```
 stream-subtitles/
-├── src/                    # Source code
-│   ├── core/              # Core subtitle processing logic
-│   ├── stream/            # Streaming integration
-│   ├── formats/           # Subtitle format parsers/generators
-│   ├── utils/             # Utility functions
-│   └── api/               # API endpoints (if applicable)
-├── tests/                 # Test files
-│   ├── unit/              # Unit tests
-│   ├── integration/       # Integration tests
-│   └── fixtures/          # Test data and fixtures
-├── docs/                  # Documentation
-├── scripts/               # Build and deployment scripts
-├── config/                # Configuration files
-└── examples/              # Usage examples
-
-*[Update this structure as the actual codebase develops]*
+├── extension/                        # Chrome Extension source code
+│   ├── background/                  # Service Worker and background tasks
+│   │   ├── service-worker.js        # Main extension controller
+│   │   ├── claude-translator.js     # Claude API translation client (Phase 3.1)
+│   │   ├── deepgram-client.js       # Deepgram WebSocket client
+│   │   ├── audio-capture-manager.js # Tab audio capture
+│   │   └── crypto-manager.js        # API key encryption/decryption
+│   ├── content/                     # Content Script (injected into web pages)
+│   │   └── content.js               # Subtitle display and management
+│   ├── offscreen/                   # Offscreen Document (Manifest V3)
+│   │   ├── offscreen.js             # Offscreen document controller
+│   │   └── audio-processor.js       # Web Audio API processing
+│   ├── popup/                       # Extension popup UI
+│   │   ├── popup.html               # UI markup
+│   │   ├── popup.js                 # UI controller and settings
+│   │   └── popup.css                # UI styling
+│   ├── utils/                       # Shared utilities
+│   │   └── crypto-manager.js        # Encryption utilities
+│   ├── manifest.json                # Extension manifest (Manifest V3)
+│   ├── icon.png                     # Extension icon
+│   └── offscreen.html               # Offscreen document HTML
+├── docs/                            # Documentation
+│   └── [architecture docs, guides]
+├── README.md                        # Project overview and usage guide
+├── DEVLOG.md                        # Development log and progress tracking
+├── SDD.md                          # Software Design Document (detailed architecture)
+├── CLAUDE.md                       # This file - AI assistant guide
+├── package.json                    # Project metadata and dependencies
+└── test-api-key.html              # API key testing utility
 ```
 
 ### Key Directories
 
-**`src/`**
-- Main application source code
-- Organized by feature/domain
+**`extension/background/`**
+- Service Worker: Main controller for extension lifecycle, message routing, API calls
+- ClaudeTranslator: Handles real-time translation via Anthropic Claude API
+- DeepgramClient: Manages WebSocket connection to Deepgram for speech recognition
+- AudioCaptureManager: Captures audio from browser tabs
+- CryptoManager: Encrypts/decrypts API keys using AES-GCM-256
 
-**`tests/`**
-- All test files mirror the `src/` structure
-- Use descriptive test names that explain the behavior being tested
+**`extension/content/`**
+- Injected into web pages
+- Manages subtitle display and DOM injection
+- Communicates with Service Worker via message passing
+
+**`extension/offscreen/`**
+- Isolated document for audio processing (required by Manifest V3)
+- Web Audio API processing and format conversion
+
+**`extension/popup/`**
+- User-facing controls: engine selection, API key input, settings
+- Real-time status display and configuration management
 
 **`docs/`**
-- API documentation
-- Architecture diagrams
-- Setup guides
+- Architecture diagrams and technical specifications
 
 ---
 
@@ -291,59 +330,156 @@ describe('SubtitleParser', () => {
 
 ## Common Tasks
 
-### Adding a New Subtitle Format
+### Implementing Claude API Translation (Phase 3.1)
 
-1. Create parser in `src/formats/<format-name>-parser.js`
-2. Create generator in `src/formats/<format-name>-generator.js`
-3. Implement format validation
-4. Add comprehensive tests with sample files
-5. Update documentation
-6. Register format in the main format registry
+**Setup:**
+1. Get API key from Anthropic console (https://console.anthropic.com/)
+2. Save the key via the extension popup (encrypted with AES-GCM-256)
+3. Verify key with built-in validator in popup
 
-### Debugging Subtitle Sync Issues
+**Implementation Steps:**
+1. ClaudeTranslator class is in `extension/background/claude-translator.js`
+2. Translation is triggered from Content Script via `chrome.runtime.sendMessage()`
+3. Service Worker routes messages to ClaudeTranslator instance
+4. Results are sent back to Content Script for display
 
-1. Check timestamp parsing logic
-2. Verify timestamp calculations
-3. Test with various video frame rates
-4. Check for rounding errors in time conversions
-5. Validate against reference implementations
+**Key Code Locations:**
+- Translation API calls: `extension/background/claude-translator.js:85` (_callClaudeAPI method)
+- API validation: `extension/background/claude-translator.js:265` (validateApiKey static method)
+- Message handling: `extension/background/service-worker.js` (search for TRANSLATE_TEXT handler)
+- Display integration: `extension/content/content.js` (displayBilingualSubtitle function)
+
+**Critical CORS Header:**
+All Claude API requests MUST include the header:
+```javascript
+'anthropic-dangerous-direct-browser-access': 'true'
+```
+This is Anthropic's security mechanism for browser-based API access. Without it, requests fail with HTTP 401.
+
+**Cost Monitoring:**
+- ClaudeTranslator tracks tokens and costs automatically
+- Call `translator.getStats()` to get current usage
+- Pricing: $0.80 per 1M input tokens, $4.00 per 1M output tokens (Haiku 4.5)
+- Set reasonable `maxTokens` limits to control costs
+
+### Debugging Speech Recognition Issues
+
+1. Check which engine is selected (Web Speech API vs Deepgram)
+2. Verify browser microphone permissions
+3. Monitor Service Worker console for audio capture errors
+4. Check for heartbeat timeout messages (speech API crashes)
+5. Test with different languages and audio quality
+
+### Debugging Subtitle Display Issues
+
+1. Verify Content Script is injected (check console on target page)
+2. Check subtitle container z-index conflicts
+3. Verify language codes (zh-TW, en, ja, etc.)
+4. Monitor translation cache hit rate
+5. Check for DOM manipulation interference by other scripts
 
 ### Performance Optimization
 
-1. Profile the application to identify bottlenecks
-2. Consider streaming/chunking for large subtitle files
-3. Cache parsed subtitles when appropriate
-4. Optimize regex patterns in parsers
-5. Use efficient data structures
+1. Monitor translation cache efficiency (should be 80%+ hit rate for repeated text)
+2. Use interim results from Speech API for responsiveness
+3. Limit subtitle buffer size to prevent memory bloat
+4. Batch API requests when possible (not applicable for real-time)
+5. Profile extension resource usage via DevTools
 
 ---
 
 ## Troubleshooting
 
-### Common Issues
+### Claude API Issues
 
-**Problem: Timestamps are off-sync**
-- Check video frame rate assumptions
-- Verify timestamp format parsing
-- Look for rounding errors in conversions
+**Problem: HTTP 401 Unauthorized Error**
+- Cause: Usually missing the critical CORS header `'anthropic-dangerous-direct-browser-access': 'true'`
+- Solution: Verify this header is present in all fetch requests to Claude API
+- Alternative: Verify API key is valid by testing with curl:
+  ```bash
+  curl -X POST https://api.anthropic.com/v1/messages \
+    -H "x-api-key: YOUR_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "content-type: application/json" \
+    -d '{"model":"claude-haiku-4-5-20251001","max_tokens":10,"messages":[{"role":"user","content":"Hi"}]}'
+  ```
 
-**Problem: Special characters not displaying correctly**
-- Verify UTF-8 encoding is being used
-- Check BOM handling
-- Validate character encoding in subtitle files
+**Problem: API Key validation fails in popup**
+- Check API key format (should start with `sk-ant-`)
+- Verify key hasn't been rotated or revoked
+- Check network connectivity
+- Review Service Worker console for detailed error messages
+- Note: Validator automatically tries Claude 3.5 Haiku as fallback if 4.5 fails
 
-**Problem: Parser failing on valid files**
-- Check for format variations (e.g., different line endings)
-- Validate against format specifications
-- Add more lenient parsing where appropriate
+**Problem: Translation returns empty results**
+- Check text length (very short texts may fail)
+- Verify target language code is valid (zh-TW, en, ja, etc.)
+- Check max_tokens setting (should be at least 100 for short texts)
+- Verify API key has sufficient balance/quota
+- Check token usage in translator.getStats()
 
-### Debug Mode
+**Problem: High translation costs**
+- Monitor translation cache hit rate (should be 80%+)
+- Check for excessive unique translations (poor cache efficiency)
+- Consider using Claude 3.5 Haiku instead of 4.5 for cost savings
+- Implement text deduplication to improve cache hits
+- Set reasonable maxTokens limits
 
-*[Add instructions for enabling debug mode]*
+### Speech Recognition Issues
 
-### Logging
+**Problem: No subtitles appearing**
+1. Check if correct engine is selected (Web Speech API vs Deepgram)
+2. Verify microphone/tab audio is working
+3. Check browser console for Content Script errors
+4. Verify Service Worker is running (check DevTools background page)
 
-*[Add information about logging configuration and levels]*
+**Problem: Frequent speech API crashes**
+- Monitor heartbeat timeout messages
+- Check for insufficient memory
+- Test with different browsers/versions
+- Consider restarting recognition periodically
+
+**Problem: Deepgram WebSocket connection fails**
+- Verify Deepgram API key is valid
+- Check network connectivity
+- Verify wss:// protocol is supported
+- Review Service Worker console for detailed error logs
+
+### Subtitle Display Issues
+
+**Problem: Subtitles not showing on page**
+- Verify Content Script is injected (check console on page)
+- Check for CSP (Content Security Policy) violations
+- Verify subtitle container z-index is high enough
+- Check for DOM manipulation by other scripts
+- Ensure language code is set correctly
+
+**Problem: Subtitle text is cut off**
+- Increase maxChars setting in subtitle buffer
+- Adjust CSS font-size or container width
+- Check for CSS conflicts with page styles
+- Reduce word count per subtitle
+
+### Debugging & Logging
+
+**Enable Debug Logging:**
+- Open Service Worker console: Extension Details → Background page
+- Open Content Script console: Right-click page → Inspect → Console
+- Check for `[Background]`, `[Claude Translator]`, `[Content]` prefixed messages
+
+**Monitor API Usage:**
+```javascript
+// In Service Worker console
+claudeTranslator.getStats()
+// Returns: { totalTranslations, cacheHits, apiCalls, totalInputTokens,
+//           totalOutputTokens, estimatedCost, cacheHitRate, etc. }
+```
+
+**Test API Key:**
+1. Open extension popup
+2. Paste API key in "Claude API Key" field
+3. Click "Test" button
+4. Check console for validation result
 
 ---
 
@@ -386,20 +522,29 @@ Before committing changes, verify:
 
 ### Understanding the Codebase
 
-**Start here:**
-1. Read this CLAUDE.md file
-2. Review the README.md for project overview
-3. Check package.json/requirements.txt for dependencies
-4. Look at the main entry point
-5. Examine test files to understand expected behavior
-6. Review recent commits and PRs for context
+**Start here (in order):**
+1. Read this CLAUDE.md file (overview and conventions)
+2. Review README.md for project overview and setup
+3. Review SDD.md for detailed architecture (sections 2-4 are most important)
+4. Check extension/manifest.json for permissions and structure
+5. Examine extension/background/service-worker.js for message routing
+6. Review extension/background/claude-translator.js for translation implementation
+7. Check recent commits in DEVLOG.md for latest changes
 
 **Key questions to answer:**
-- What subtitle formats are currently supported?
-- How are timestamps represented internally?
-- What are the main APIs/interfaces?
-- How is error handling done?
-- What are the performance characteristics?
+- How do the Web Speech API, Deepgram, and Claude API integrate?
+- What does the ClaudeTranslator class do? (encryption, caching, cost tracking)
+- How does message passing work between popup, service worker, and content script?
+- How are API keys encrypted and stored?
+- What is the critical CORS header and why is it needed?
+- How does the translation cache work and what's the expected hit rate?
+
+**Chrome Extension Manifest V3 specifics:**
+- Service Worker replaces Background Page
+- Offscreen Document required for audio processing (no background page)
+- Message passing: chrome.runtime.sendMessage() for cross-component communication
+- Permissions: tabCapture, tabs, activeTab, host_permissions for APIs
+- Storage: chrome.storage.local for user settings and encrypted API keys
 
 ---
 
@@ -424,17 +569,26 @@ Before committing changes, verify:
 
 ## Maintenance Notes
 
-**Last Updated**: 2025-11-21
-**Maintainer**: [To be assigned]
+**Last Updated**: 2025-12-22
+**Phase**: 3.1 (Claude AI Translation Implementation Complete)
+**Maintainer**: Claude AI Assistant
+
+### Recent Updates (2025-12-22)
+- Updated Tech Stack to reflect Chrome Extension architecture with Web Speech API, Deepgram, and Claude API
+- Updated Repository Structure with actual file/directory organization
+- Added Claude API implementation guide (setup, critical CORS header, cost monitoring)
+- Added comprehensive troubleshooting for Claude API errors, speech recognition, and subtitle display
+- Enhanced "Understanding the Codebase" with Chrome Extension Manifest V3 specifics
 
 ### Update Checklist
 
 This document should be updated when:
-- [ ] New features are added
+- [ ] New features are added (e.g., Phase 4 model improvements)
 - [ ] Development workflow changes
 - [ ] New conventions are established
-- [ ] Dependencies change significantly
+- [ ] Dependencies change significantly (e.g., Claude API version update)
 - [ ] Deployment process changes
+- [ ] New common issues are discovered and resolved
 
 ---
 

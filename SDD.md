@@ -1,11 +1,11 @@
 # Stream-Subtitles 軟體設計文件 (Software Design Document)
 
-**版本**: 2.1
+**版本**: 3.0
 **文件建立日期**: 2025-11-21
-**最後更新**: 2025-12-05
+**最後更新**: 2025-12-22
 **作者**: Claude AI Assistant
-**專案狀態**: Phase 2 已完成
-**重大更新**: Phase 2.1 - 核心架構穩定性修復 (2025-12-05)
+**專案狀態**: Phase 3 進行中 (Phase 3.1 - Claude 翻譯集成)
+**重大更新**: Phase 3.1 - Claude AI 即時翻譯整合 (2025-12-22)
 
 ---
 
@@ -45,10 +45,11 @@
 ### 1.3 主要特性
 
 #### 基礎功能
-✅ **雙引擎架構** (NEW): 支援 Web Speech API 與 Deepgram 雙語音辨識引擎
+✅ **雙引擎架構**: 支援 Web Speech API 與 Deepgram 雙語音辨識引擎
 ✅ **引擎自由切換**: 使用者可隨時切換辨識引擎，無需重啟
 ✅ **零外部依賴 (Web Speech API)**: 使用瀏覽器內建 API，免費無需 API 金鑰
 ✅ **高精度選項 (Deepgram)**: 專業級語音辨識，適合追求高準確度的場景
+✅ **Claude AI 即時翻譯** (NEW Phase 3.1): 雙語字幕顯示，支援原文 + Claude 翻譯
 ✅ **Manifest V3 相容**: 完全遵循 Chrome Extension Manifest V3 規範
 
 #### 字幕處理
@@ -59,9 +60,10 @@
 ✅ **關鍵字學習**: （選配）支援自定義關鍵字優化辨識準確度
 
 #### 安全性
-✅ **API Key 加密** (NEW): AES-GCM-256 加密儲存 Deepgram API Key
-✅ **Extension ID 唯一密鑰** (NEW): 每個 Extension 實例使用唯一加密密鑰
-✅ **PBKDF2 密鑰派生** (NEW): 100,000 次迭代，高安全性密鑰派生
+✅ **API Key 加密**: AES-GCM-256 加密儲存多個 API Key（Deepgram + Claude）
+✅ **Extension ID 唯一密鑰**: 每個 Extension 實例使用唯一加密密鑰
+✅ **PBKDF2 密鑰派生**: 100,000 次迭代，高安全性密鑰派生
+✅ **CORS 安全標準** (NEW Phase 3.1): Claude API 使用官方 Browser 存取安全機制
 
 ### 1.4 使用場景
 
@@ -631,6 +633,205 @@ async function sendMessageWithRetry(message, maxRetries = 3) {
       if (i === maxRetries - 1) throw error;
       await sleep(1000 * Math.pow(2, i)); // 指數退避
     }
+  }
+}
+```
+
+### 4.5 Claude AI 翻譯模組（Phase 3.1 新增）
+
+#### 4.5.1 模組架構
+
+```
+┌─────────────────────────────────────┐
+│    Claude Translator Module         │
+├─────────────────────────────────────┤
+│  • API Key 管理與加密               │
+│  • API 金鑰驗證（4.5→3.5 備用）     │
+│  • 翻譯請求與快取                   │
+│  • CORS 安全標準實現                │
+│  • 成本統計與監控                   │
+└─────────────────────────────────────┘
+```
+
+#### 4.5.2 ClaudeTranslator 類別
+
+**核心功能**:
+```javascript
+class ClaudeTranslator {
+  constructor(apiKey, config = {}) {
+    this.apiKey = apiKey;
+    this.config = {
+      model: 'claude-haiku-4-5-20251001',  // Claude 4.5 Haiku
+      maxTokens: 1024,
+      temperature: 0.3,  // 低溫度確保翻譯一致性
+      ...config
+    };
+
+    // 翻譯快取（避免重複翻譯相同文字）
+    this.cache = new Map();  // 最多 500 個條目
+
+    // 統計資訊
+    this.stats = {
+      totalTranslations: 0,
+      cacheHits: 0,
+      apiCalls: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      estimatedCost: 0  // USD
+    };
+  }
+
+  async translate(text, targetLang, sourceLang = null) {
+    // 檢查快取
+    // 呼叫 Claude API
+    // 儲存到快取
+    // 更新統計
+  }
+}
+```
+
+#### 4.5.3 CORS 安全機制（關鍵實現）
+
+Anthropic 要求瀏覽器 API 存取時必須聲明特殊 CORS 標頭：
+
+```javascript
+async _callClaudeAPI(text, targetLang, sourceLang) {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': this.apiKey,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+      // ⚠️ 必須添加此標頭以通過 CORS 驗證
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    body: JSON.stringify({
+      model: this.config.model,
+      max_tokens: this.config.maxTokens,
+      temperature: this.config.temperature,
+      messages: [{
+        role: 'user',
+        content: `請將以下文字翻譯成${targetLangName}。\n原文：\n${text}`
+      }]
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Claude API 錯誤: ${response.statusText}`);
+  }
+
+  return await response.json();
+}
+```
+
+#### 4.5.4 API 金鑰驗證機制
+
+```javascript
+static async validateApiKey(apiKey) {
+  try {
+    // 優先嘗試 Claude 4.5 Haiku
+    let response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey.trim(),
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 10,
+        messages: [{ role: 'user', content: 'Hi' }]
+      })
+    });
+
+    // 失敗時備用 Claude 3.5 Haiku
+    if (!response.ok && response.status === 401) {
+      response = await fetch('https://api.anthropic.com/v1/messages', {
+        // ... 使用 claude-3-5-haiku-20241022 重試
+      });
+    }
+
+    return response.ok;
+  } catch (error) {
+    console.error('[Claude Translator] 驗證失敗:', error);
+    return false;
+  }
+}
+```
+
+#### 4.5.5 翻譯快取機制
+
+```javascript
+// 快取鍵 = 目標語言 + 原文
+_getCacheKey(text, targetLang) {
+  return `${targetLang}:${text}`;
+}
+
+// 快取已滿時使用 FIFO 移除舊項目
+_addToCache(key, value) {
+  if (this.cache.size >= this.cacheMaxSize) {
+    const firstKey = this.cache.keys().next().value;
+    this.cache.delete(firstKey);
+  }
+  this.cache.set(key, value);
+}
+```
+
+#### 4.5.6 成本監控
+
+```javascript
+// Claude 4.5 Haiku 定價（2025）
+const PRICING = {
+  inputCostPerMToken: 0.8,   // $0.80 per 1M tokens
+  outputCostPerMToken: 4.0   // $4.00 per 1M tokens
+};
+
+_calculateRequestCost(usage) {
+  const inputCost = (usage.input_tokens / 1000000) * PRICING.inputCostPerMToken;
+  const outputCost = (usage.output_tokens / 1000000) * PRICING.outputCostPerMToken;
+  return inputCost + outputCost;
+}
+
+getStats() {
+  return {
+    ...this.stats,
+    cacheHitRate: `${(this.stats.cacheHits / this.stats.totalTranslations * 100).toFixed(1)}%`,
+    cacheSize: this.cache.size,
+    estimatedCostFormatted: `$${this.stats.estimatedCost.toFixed(4)} USD`
+  };
+}
+```
+
+#### 4.5.7 整合於 Content Script
+
+```javascript
+// Content Script 中使用翻譯
+async function displayBilingualSubtitle(text, targetLang = 'zh-TW') {
+  // 原文顯示
+  const originalDiv = document.createElement('div');
+  originalDiv.textContent = text;
+  originalDiv.className = 'original-text';
+
+  // 請求翻譯
+  try {
+    const result = await chrome.runtime.sendMessage({
+      type: 'TRANSLATE_TEXT',
+      text: text,
+      targetLang: targetLang
+    });
+
+    if (result.success) {
+      const translationDiv = document.createElement('div');
+      translationDiv.textContent = result.translatedText;
+      translationDiv.className = 'translation-text';
+
+      subtitleContainer.appendChild(originalDiv);
+      subtitleContainer.appendChild(translationDiv);
+    }
+  } catch (error) {
+    console.error('翻譯失敗:', error);
+    subtitleContainer.appendChild(originalDiv);  // 仍顯示原文
   }
 }
 ```
@@ -2363,9 +2564,13 @@ describe('E2E: Subtitle Display', () => {
 
 #### 13.2.1 進階功能
 
-- [ ] **即時翻譯**
-  - 整合翻譯 API
-  - 雙語字幕顯示
+- ✅ **即時翻譯（Phase 3.1 進行中）**
+  - ✅ 整合 Claude API
+  - ✅ 雙語字幕顯示
+  - 🚧 翻譯品質優化（Phase 3.2-3.3）
+    - [ ] 優化翻譯 Prompt（領域上下文）
+    - [ ] 實現批量翻譯（保留上下文）
+    - [ ] 支援多種語言翻譯目標
 
 - [ ] **關鍵字過濾**
   - 自訂關鍵字高亮
@@ -2380,6 +2585,11 @@ describe('E2E: Subtitle Display', () => {
   - 多裝置共用設定
 
 #### 13.2.2 AI 增強
+
+- 🚧 **翻譯模型選擇（Phase 4 規劃）**
+  - [ ] 支援 Claude Sonnet 4.5（更準確）
+  - [ ] 使用者可配置模型選擇
+  - [ ] 成本監控與統計
 
 - [ ] **智能標點**
   - AI 自動添加標點符號
