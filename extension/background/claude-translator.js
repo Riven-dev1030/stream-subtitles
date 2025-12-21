@@ -23,7 +23,7 @@ class ClaudeTranslator {
 
     // API endpoint
     this.apiEndpoint = 'https://api.anthropic.com/v1/messages';
-    this.apiVersion = '2023-06-01';
+    this.apiVersion = '2023-06-01'; // 可能需要更新為更新的版本
 
     // 統計
     this.stats = {
@@ -115,7 +115,8 @@ ${text}`;
       headers: {
         'x-api-key': this.apiKey,
         'anthropic-version': this.apiVersion,
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        'anthropic-dangerous-direct-browser-access': 'true'
       },
       body: JSON.stringify(requestBody)
     });
@@ -267,17 +268,17 @@ ${text}`;
       return false;
     }
 
-    console.log('[Claude Translator] 開始驗證 API Key...');
-    console.log('[Claude Translator] API Key 格式:', apiKey.substring(0, 10) + '...');
-
     try {
-      // 發送一個簡單的測試請求
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      console.log('[Claude Translator] 開始驗證 API Key...');
+
+      // 先嘗試 Claude 4.5 Haiku
+      let response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
-          'x-api-key': apiKey,
+          'x-api-key': apiKey.trim(),
           'anthropic-version': '2023-06-01',
-          'content-type': 'application/json'
+          'content-type': 'application/json',
+          'anthropic-dangerous-direct-browser-access': 'true'
         },
         body: JSON.stringify({
           model: 'claude-haiku-4-5-20251001',
@@ -291,33 +292,46 @@ ${text}`;
         })
       });
 
-      console.log('[Claude Translator] API 回應狀態:', response.status, response.statusText);
+      // 如果 Claude 4.5 失敗，嘗試 Claude 3.5 Haiku 作為備用
+      if (!response.ok && response.status === 401) {
+        console.warn('[Claude Translator] Claude 4.5 驗證失敗，嘗試 Claude 3.5 Haiku...');
 
-      if (response.ok) {
-        console.log('[Claude Translator] ✅ API Key 驗證成功');
-        return true;
-      } else {
-        // 嘗試讀取錯誤訊息
-        let errorMessage = `HTTP ${response.status}`;
-        try {
-          const errorData = await response.json();
-          errorMessage = errorData.error?.message || errorData.message || errorMessage;
-          console.error('[Claude Translator] API 錯誤:', errorData);
-        } catch (e) {
-          const errorText = await response.text();
-          console.error('[Claude Translator] API 錯誤文字:', errorText);
-        }
+        response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'x-api-key': apiKey.trim(),
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+            'anthropic-dangerous-direct-browser-access': 'true'
+          },
+          body: JSON.stringify({
+            model: 'claude-3-5-haiku-20241022',
+            max_tokens: 10,
+            messages: [
+              {
+                role: 'user',
+                content: 'Hi'
+              }
+            ]
+          })
+        });
 
-        console.error('[Claude Translator] ❌ API Key 驗證失敗:', errorMessage);
+        console.log('[Claude Translator] Claude 3.5 回應狀態:', response.status);
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('[Claude Translator] API 驗證失敗:', {
+          status: response.status,
+          error: errorData.error?.message || response.statusText
+        });
         return false;
       }
+
+      console.log('[Claude Translator] ✅ API Key 驗證成功');
+      return true;
     } catch (error) {
-      console.error('[Claude Translator] ❌ 網路請求失敗:', error);
-      console.error('[Claude Translator] 錯誤詳情:', {
-        name: error.name,
-        message: error.message,
-        stack: error.stack
-      });
+      console.error('[Claude Translator] API Key 驗證失敗 (網絡錯誤):', error);
       return false;
     }
   }

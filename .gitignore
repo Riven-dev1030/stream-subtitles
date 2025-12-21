@@ -1,0 +1,26 @@
+# API Keys and sensitive data
+api.txt
+*.key
+.env
+.env.local
+
+# Test files
+test-*.html
+bug*.png
+
+# Logs
+*.log
+console-*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependencies
+node_modules/

@@ -712,7 +712,7 @@ async function handleTestClaude(sendResponse) {
     console.log('[Background] 測試 Claude API 連接');
 
     const crypto = await initCryptoManager();
-    const apiKey = await crypto.getClaudeApiKey();
+    let apiKey = await crypto.getClaudeApiKey();
 
     if (!apiKey) {
       sendResponse({
@@ -723,7 +723,7 @@ async function handleTestClaude(sendResponse) {
     }
 
     // 使用靜態方法驗證 API Key
-    const isValid = await ClaudeTranslator.validateApiKey(apiKey);
+    const isValid = await ClaudeTranslator.validateApiKey(apiKey.trim());
 
     if (isValid) {
       console.log('[Background] Claude API 連接測試成功');
