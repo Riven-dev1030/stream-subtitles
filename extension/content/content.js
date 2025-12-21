@@ -546,7 +546,7 @@ function cleanupBeforeAdd(newSentences) {
 }
 
 // 顯示字幕
-function displaySubtitle(text, isFinal, language = null) {
+function displaySubtitle(text, isFinal, language = null, translatedText = null) {
   if (!text) return;
 
   if (isFinal) {
@@ -595,7 +595,8 @@ function displaySubtitle(text, isFinal, language = null) {
         timestamp: interimItem.timestamp, // 保留原始時間戳
         source: 'final', // 標記為已校正
         corrected: similarity < 0.9, // 如果相似度低，標記為有校正
-        language: language || interimItem.language // 保留或更新語言資訊
+        language: language || interimItem.language, // 保留或更新語言資訊
+        translatedText: translatedText || interimItem.translatedText // 保留或更新翻譯
       };
 
       updateSubtitleDisplay();
@@ -650,7 +651,8 @@ function displaySubtitle(text, isFinal, language = null) {
         text: finalText,
         timestamp: Date.now(),
         source: 'interim',
-        language: language // 儲存語言資訊
+        language: language, // 儲存語言資訊
+        translatedText: translatedText // 儲存翻譯
       };
       console.log('[Content] 🔄 更新 Interim (', finalText.length, '字)');
     } else {
@@ -675,7 +677,8 @@ function displaySubtitle(text, isFinal, language = null) {
         text: normalized,
         timestamp: Date.now(),
         source: 'interim',
-        language: language // 儲存語言資訊
+        language: language, // 儲存語言資訊
+        translatedText: translatedText // 儲存翻譯
       });
 
       console.log('[Content] ➕ 新增 Interim');
@@ -768,21 +771,25 @@ function updateSubtitleDisplay() {
 
   // 顯示緩衝區中的句子（每句一個 span）
   displayBuffer.forEach((item, index) => {
-    const span = document.createElement('span');
-    span.className = 'subtitle-line';
+    const container = document.createElement('div');
+    container.className = 'subtitle-item';
+
+    // 原文行
+    const originalLine = document.createElement('span');
+    originalLine.className = 'subtitle-line original';
 
     // 根據來源添加樣式
     if (item.source === 'interim') {
-      span.classList.add('interim'); // Interim 字幕樣式（可能會變動）
+      originalLine.classList.add('interim'); // Interim 字幕樣式（可能會變動）
     } else if (item.source === 'final') {
       if (item.corrected) {
-        span.classList.add('corrected'); // Final 校正過的字幕（可加閃爍效果）
+        originalLine.classList.add('corrected'); // Final 校正過的字幕（可加閃爍效果）
       }
     }
 
     // 舊的句子加上淡化效果
     if (index < displayBuffer.length - 1) {
-      span.classList.add('old');
+      originalLine.classList.add('old');
     }
 
     // 如果有語言資訊，顯示語言標籤
@@ -791,14 +798,38 @@ function updateSubtitleDisplay() {
       langTag.className = 'language-tag';
       langTag.textContent = getLanguageLabel(item.language);
       langTag.style.cssText = 'font-size: 0.7em; background: rgba(255,255,255,0.2); padding: 1px 4px; border-radius: 2px; margin-right: 4px;';
-      span.appendChild(langTag);
+      originalLine.appendChild(langTag);
     }
 
-    // 添加字幕文字
+    // 添加原文文字
     const textNode = document.createTextNode(item.text);
-    span.appendChild(textNode);
+    originalLine.appendChild(textNode);
 
-    subtitleText.appendChild(span);
+    container.appendChild(originalLine);
+
+    // 如果有翻譯，顯示翻譯行
+    if (item.translatedText) {
+      const translatedLine = document.createElement('span');
+      translatedLine.className = 'subtitle-line translated';
+
+      // 翻譯標籤
+      const transTag = document.createElement('span');
+      transTag.className = 'translation-tag';
+      transTag.textContent = '譯';
+      transTag.style.cssText = 'font-size: 0.7em; background: rgba(100,200,255,0.3); color: #fff; padding: 1px 4px; border-radius: 2px; margin-right: 4px;';
+      translatedLine.appendChild(transTag);
+
+      // 翻譯文字
+      const transTextNode = document.createTextNode(item.translatedText);
+      translatedLine.appendChild(transTextNode);
+
+      // 翻譯使用稍小的字體和不同顏色
+      translatedLine.style.cssText = 'font-size: 0.9em; color: rgba(255,255,255,0.85); margin-top: 2px; display: block;';
+
+      container.appendChild(translatedLine);
+    }
+
+    subtitleText.appendChild(container);
 
     // 在句子之間加上分隔（換行）
     if (index < displayBuffer.length - 1) {
@@ -1054,6 +1085,7 @@ function stopHeartbeat() {
  * @param {number} result.timestamp - 時間戳
  * @param {string} result.language - 檢測到的語言（如果有）
  * @param {number} result.languageConfidence - 語言檢測信心度（如果有）
+ * @param {string} result.translatedText - 翻譯文字（如果有）
  */
 function handleDeepgramResult(result) {
   try {
@@ -1061,12 +1093,15 @@ function handleDeepgramResult(result) {
     if (result.language) {
       console.log('[Content] 檢測語言:', result.language, '信心度:', result.languageConfidence);
     }
+    if (result.translatedText) {
+      console.log('[Content] 翻譯結果:', result.translatedText);
+    }
 
     // 更新最後收到結果的時間
     lastResultTimestamp = Date.now();
 
-    // 顯示字幕（使用現有的 displaySubtitle 函數，並傳遞語言資訊）
-    displaySubtitle(result.text, result.isFinal, result.language);
+    // 顯示字幕（使用現有的 displaySubtitle 函數，並傳遞語言與翻譯資訊）
+    displaySubtitle(result.text, result.isFinal, result.language, result.translatedText);
 
     // 確保字幕 UI 可見
     if (!isVisible) {
