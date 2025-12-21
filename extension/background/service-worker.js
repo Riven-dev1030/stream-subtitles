@@ -161,7 +161,7 @@ async function handleMessage(message, sender, sendResponse) {
 
       case 'startDeepgramRecognition':
         // 開始 Deepgram 語音辨識
-        await handleStartDeepgramRecognition(message.tabId, message.language, sendResponse);
+        await handleStartDeepgramRecognition(message.tabId, message.language, message.autoDetect, sendResponse);
         break;
 
       case 'stopDeepgramRecognition':
@@ -339,9 +339,9 @@ async function ensureContentScriptReady(tabId, maxRetries = 5) {
   }
 }
 
-async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', sendResponse) {
+async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', autoDetect = false, sendResponse) {
   try {
-    console.log(`[Background] 開始 Deepgram 語音辨識，Tab: ${tabId}, 語言: ${language}`);
+    console.log(`[Background] 開始 Deepgram 語音辨識，Tab: ${tabId}, 語言: ${language}, 自動檢測: ${autoDetect}`);
 
     // **關鍵修復：如果已在運行，先完全停止並等待清理完成**
     if (isDeepgramActive) {
@@ -366,7 +366,9 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', sendRes
     }
 
     // 2. 初始化 DeepgramClient
-    console.log('[Background] 初始化 Deepgram Client，語言:', language);
+    // 如果啟用自動檢測，使用 'multi' 語言模式（支援多語言 code-switching）
+    const actualLanguage = autoDetect ? 'multi' : language;
+    console.log('[Background] 初始化 Deepgram Client，語言:', actualLanguage, autoDetect ? '(多語言自動檢測)' : '');
     console.log('[Background] API Key 前綴:', apiKey ? apiKey.substring(0, 10) + '...' : 'null');
 
     // **關鍵修復：總是創建新的 DeepgramClient，確保乾淨狀態**
@@ -379,21 +381,26 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', sendRes
       }
     }
 
-    deepgramClient = new DeepgramClient(apiKey, { language });
+    deepgramClient = new DeepgramClient(apiKey, { language: actualLanguage });
     console.log('[Background] ✅ 新的 Deepgram Client 已創建');
 
     // 3. 設定 Deepgram 結果回調
     deepgramClient.onResult = (result) => {
       console.log('[Background] Deepgram 結果:', result.isFinal ? 'Final' : 'Interim', result.text);
+      if (result.language) {
+        console.log('[Background] 檢測到語言:', result.language, '信心度:', result.languageConfidence);
+      }
 
-      // 轉發結果到 Content Script
+      // 轉發結果到 Content Script（包含語言資訊）
       chrome.tabs.sendMessage(tabId, {
         action: 'deepgramResult',
         result: {
           text: result.text,
           isFinal: result.isFinal,
           confidence: result.confidence,
-          timestamp: result.timestamp
+          timestamp: result.timestamp,
+          language: result.language,
+          languageConfidence: result.languageConfidence
         }
       }).catch(err => {
         console.error('[Background] 轉發結果到 Content Script 失敗:', err);

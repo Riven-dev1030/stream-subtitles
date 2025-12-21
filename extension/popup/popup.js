@@ -236,7 +236,8 @@ function startRecording() {
       chrome.runtime.sendMessage({
         action: 'startDeepgramRecognition',
         tabId: tab.id,
-        language: currentLanguage
+        language: currentLanguage,
+        autoDetect: autoDetect
       }, (response) => {
         if (chrome.runtime.lastError) {
           console.error('[Popup] 啟動 Deepgram 失敗:', chrome.runtime.lastError);

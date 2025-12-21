@@ -21,7 +21,8 @@ class DeepgramClient {
       interimResults: config.interimResults !== undefined ? config.interimResults : true,
       encoding: config.encoding || 'linear16',
       sampleRate: config.sampleRate || 16000,
-      model: config.model || 'general', // general, phonecall, etc.
+      model: config.model || 'nova-2', // 使用 nova-2 支援更好的辨識品質
+      endpointing: config.endpointing || 100, // 用於 code-switching，建議 100ms
       ...config
     };
 
@@ -80,7 +81,8 @@ class DeepgramClient {
       language: this.config.language,
       punctuate: this.config.punctuate,
       interim_results: this.config.interimResults,
-      model: this.config.model
+      model: this.config.model,
+      endpointing: this.config.endpointing
     });
 
     return `wss://api.deepgram.com/v1/listen?${params.toString()}`;
@@ -174,7 +176,10 @@ class DeepgramClient {
       text: transcript.trim(),
       isFinal: data.is_final || false,
       confidence: alternative.confidence || 0,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      // 新增：語言檢測資訊（如果有的話）
+      language: alternative.language || data.metadata?.detected_language || null,
+      languageConfidence: alternative.language_confidence || null
     };
 
     console.log('[Deepgram] 辨識結果:', result);

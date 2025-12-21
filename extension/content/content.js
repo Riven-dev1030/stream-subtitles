@@ -546,7 +546,7 @@ function cleanupBeforeAdd(newSentences) {
 }
 
 // 顯示字幕
-function displaySubtitle(text, isFinal) {
+function displaySubtitle(text, isFinal, language = null) {
   if (!text) return;
 
   if (isFinal) {
@@ -594,7 +594,8 @@ function displaySubtitle(text, isFinal) {
         text: finalText,
         timestamp: interimItem.timestamp, // 保留原始時間戳
         source: 'final', // 標記為已校正
-        corrected: similarity < 0.9 // 如果相似度低，標記為有校正
+        corrected: similarity < 0.9, // 如果相似度低，標記為有校正
+        language: language || interimItem.language // 保留或更新語言資訊
       };
 
       updateSubtitleDisplay();
@@ -648,7 +649,8 @@ function displaySubtitle(text, isFinal) {
       displayBuffer[displayBuffer.length - 1] = {
         text: finalText,
         timestamp: Date.now(),
-        source: 'interim'
+        source: 'interim',
+        language: language // 儲存語言資訊
       };
       console.log('[Content] 🔄 更新 Interim (', finalText.length, '字)');
     } else {
@@ -672,7 +674,8 @@ function displaySubtitle(text, isFinal) {
       displayBuffer.push({
         text: normalized,
         timestamp: Date.now(),
-        source: 'interim'
+        source: 'interim',
+        language: language // 儲存語言資訊
       });
 
       console.log('[Content] ➕ 新增 Interim');
@@ -782,7 +785,19 @@ function updateSubtitleDisplay() {
       span.classList.add('old');
     }
 
-    span.textContent = item.text;
+    // 如果有語言資訊，顯示語言標籤
+    if (item.language) {
+      const langTag = document.createElement('span');
+      langTag.className = 'language-tag';
+      langTag.textContent = getLanguageLabel(item.language);
+      langTag.style.cssText = 'font-size: 0.7em; background: rgba(255,255,255,0.2); padding: 1px 4px; border-radius: 2px; margin-right: 4px;';
+      span.appendChild(langTag);
+    }
+
+    // 添加字幕文字
+    const textNode = document.createTextNode(item.text);
+    span.appendChild(textNode);
+
     subtitleText.appendChild(span);
 
     // 在句子之間加上分隔（換行）
@@ -790,6 +805,27 @@ function updateSubtitleDisplay() {
       subtitleText.appendChild(document.createElement('br'));
     }
   });
+}
+
+// 取得語言標籤顯示文字
+function getLanguageLabel(langCode) {
+  const labels = {
+    'en': 'EN',
+    'zh': 'ZH',
+    'zh-TW': 'ZH',
+    'zh-CN': 'ZH',
+    'ja': 'JA',
+    'ko': 'KO',
+    'es': 'ES',
+    'fr': 'FR',
+    'de': 'DE',
+    'it': 'IT',
+    'pt': 'PT',
+    'ru': 'RU',
+    'ar': 'AR',
+    'hi': 'HI'
+  };
+  return labels[langCode] || langCode.toUpperCase().substring(0, 2);
 }
 
 // 顯示字幕 UI
@@ -1016,16 +1052,21 @@ function stopHeartbeat() {
  * @param {boolean} result.isFinal - 是否為最終結果
  * @param {number} result.confidence - 信心度
  * @param {number} result.timestamp - 時間戳
+ * @param {string} result.language - 檢測到的語言（如果有）
+ * @param {number} result.languageConfidence - 語言檢測信心度（如果有）
  */
 function handleDeepgramResult(result) {
   try {
     console.log('[Content] Deepgram 結果:', result.text, result.isFinal ? '(final)' : '(interim)', 'confidence:', result.confidence);
+    if (result.language) {
+      console.log('[Content] 檢測語言:', result.language, '信心度:', result.languageConfidence);
+    }
 
     // 更新最後收到結果的時間
     lastResultTimestamp = Date.now();
 
-    // 顯示字幕（使用現有的 displaySubtitle 函數）
-    displaySubtitle(result.text, result.isFinal);
+    // 顯示字幕（使用現有的 displaySubtitle 函數，並傳遞語言資訊）
+    displaySubtitle(result.text, result.isFinal, result.language);
 
     // 確保字幕 UI 可見
     if (!isVisible) {
