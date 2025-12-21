@@ -6,10 +6,11 @@ console.log('[Background] Service worker 已載入');
 // 動態導入模組（路徑相對於 service-worker.js 所在目錄）
 importScripts(
   '../utils/crypto-manager.js',      // 回到上層目錄，再進入 utils/
-  './deepgram-client.js'             // 同目錄下的 deepgram-client.js
+  './deepgram-client.js',            // 同目錄下的 deepgram-client.js
+  './claude-translator.js'           // Claude 翻譯客戶端
 );
 
-console.log('[Background] Deepgram 模組已載入（使用 Offscreen Document 處理音訊）');
+console.log('[Background] Deepgram 與 Claude 翻譯模組已載入');
 
 // 擴充功能安裝或更新時
 chrome.runtime.onInstalled.addListener((details) => {
@@ -32,14 +33,19 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 
 // ============================================
-// Deepgram 相關變數
+// Deepgram 與翻譯相關變數
 // ============================================
 
 let deepgramClient = null;
+let claudeTranslator = null;
 let cryptoManager = null;
 let isDeepgramActive = false;
 let currentTabId = null;
 let offscreenDocumentCreated = false;
+
+// 翻譯設定
+let translationEnabled = false;
+let targetLanguage = 'zh-TW'; // 預設翻譯目標語言
 
 // 初始化加密管理器
 async function initCryptoManager() {
@@ -152,6 +158,21 @@ async function handleMessage(message, sender, sendResponse) {
       case 'testDeepgramConnection':
         // 測試 Deepgram 連接
         await handleTestDeepgram(sendResponse);
+        break;
+
+      case 'testClaudeConnection':
+        // 測試 Claude API 連接
+        await handleTestClaude(sendResponse);
+        break;
+
+      case 'getTranslationStats':
+        // 取得翻譯統計
+        handleGetTranslationStats(sendResponse);
+        break;
+
+      case 'clearTranslationCache':
+        // 清除翻譯快取
+        handleClearTranslationCache(sendResponse);
         break;
 
       case 'updateDeepgramKey':
@@ -357,12 +378,38 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', autoDet
     // **關鍵修復：確保 Content Script 已就緒**
     await ensureContentScriptReady(tabId);
 
-    // 1. 初始化加密管理器並取得 API Key
+    // 1. 初始化加密管理器並取得 Deepgram API Key
     const crypto = await initCryptoManager();
     const apiKey = await crypto.getApiKey();
 
     if (!apiKey) {
       throw new Error('未設定 Deepgram API Key');
+    }
+
+    // 1.5 讀取翻譯設定並初始化 Claude 翻譯器（如果啟用）
+    const settings = await chrome.storage.sync.get(['translationEnabled', 'targetLanguage']);
+    translationEnabled = settings.translationEnabled || false;
+    targetLanguage = settings.targetLanguage || 'zh-TW';
+
+    if (translationEnabled) {
+      console.log('[Background] 翻譯已啟用，目標語言:', targetLanguage);
+
+      // 取得 Claude API Key
+      const claudeApiKey = await crypto.getClaudeApiKey();
+
+      if (claudeApiKey) {
+        // 初始化 Claude 翻譯器
+        claudeTranslator = new ClaudeTranslator(claudeApiKey, {
+          model: 'claude-3-5-haiku-20241022'
+        });
+        console.log('[Background] ✅ Claude 翻譯器已初始化');
+      } else {
+        console.warn('[Background] ⚠️ 翻譯已啟用但未設定 Claude API Key，將不進行翻譯');
+        translationEnabled = false;
+      }
+    } else {
+      console.log('[Background] 翻譯未啟用');
+      claudeTranslator = null;
     }
 
     // 2. 初始化 DeepgramClient
@@ -385,23 +432,48 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', autoDet
     console.log('[Background] ✅ 新的 Deepgram Client 已創建');
 
     // 3. 設定 Deepgram 結果回調
-    deepgramClient.onResult = (result) => {
+    deepgramClient.onResult = async (result) => {
       console.log('[Background] Deepgram 結果:', result.isFinal ? 'Final' : 'Interim', result.text);
       if (result.language) {
         console.log('[Background] 檢測到語言:', result.language, '信心度:', result.languageConfidence);
       }
 
-      // 轉發結果到 Content Script（包含語言資訊）
+      // 準備要轉發的結果
+      const resultToSend = {
+        text: result.text,
+        isFinal: result.isFinal,
+        confidence: result.confidence,
+        timestamp: result.timestamp,
+        language: result.language,
+        languageConfidence: result.languageConfidence,
+        translatedText: null  // 翻譯文字（如果有）
+      };
+
+      // 如果啟用翻譯且有 Claude 翻譯器，則進行翻譯
+      if (translationEnabled && claudeTranslator && result.text) {
+        try {
+          console.log('[Background] 開始翻譯:', result.text.substring(0, 30) + '...');
+          const sourceLang = result.language || null;
+          const translationResult = await claudeTranslator.translate(
+            result.text,
+            targetLanguage,
+            sourceLang
+          );
+
+          resultToSend.translatedText = translationResult.translatedText;
+
+          console.log('[Background] 翻譯完成:', translationResult.cached ? '(快取)' : '(API)',
+                      translationResult.translatedText.substring(0, 30) + '...');
+        } catch (error) {
+          console.error('[Background] 翻譯失敗:', error);
+          // 翻譯失敗不影響原文顯示
+        }
+      }
+
+      // 轉發結果到 Content Script（包含翻譯）
       chrome.tabs.sendMessage(tabId, {
         action: 'deepgramResult',
-        result: {
-          text: result.text,
-          isFinal: result.isFinal,
-          confidence: result.confidence,
-          timestamp: result.timestamp,
-          language: result.language,
-          languageConfidence: result.languageConfidence
-        }
+        result: resultToSend
       }).catch(err => {
         console.error('[Background] 轉發結果到 Content Script 失敗:', err);
       });
@@ -627,3 +699,90 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 console.log('[Background] Tab 生命週期監聽器已設置');
 
+
+// ============================================
+// Claude 翻譯相關函數
+// ============================================
+
+/**
+ * 測試 Claude API 連接
+ */
+async function handleTestClaude(sendResponse) {
+  try {
+    console.log('[Background] 測試 Claude API 連接');
+
+    const crypto = await initCryptoManager();
+    const apiKey = await crypto.getClaudeApiKey();
+
+    if (!apiKey) {
+      sendResponse({
+        success: false,
+        error: '未找到 Claude API Key'
+      });
+      return;
+    }
+
+    // 使用靜態方法驗證 API Key
+    const isValid = await ClaudeTranslator.validateApiKey(apiKey);
+
+    if (isValid) {
+      console.log('[Background] Claude API 連接測試成功');
+      sendResponse({
+        success: true,
+        message: '連接成功'
+      });
+    } else {
+      console.error('[Background] Claude API Key 無效');
+      sendResponse({
+        success: false,
+        error: 'API Key 無效或連接失敗'
+      });
+    }
+  } catch (error) {
+    console.error('[Background] Claude 測試失敗:', error);
+    sendResponse({
+      success: false,
+      error: error.message || '測試失敗'
+    });
+  }
+}
+
+/**
+ * 取得翻譯統計
+ */
+function handleGetTranslationStats(sendResponse) {
+  if (claudeTranslator) {
+    const stats = claudeTranslator.getStats();
+    console.log('[Background] 翻譯統計:', stats);
+    sendResponse({
+      success: true,
+      stats: stats
+    });
+  } else {
+    sendResponse({
+      success: false,
+      error: '翻譯器未初始化'
+    });
+  }
+}
+
+/**
+ * 清除翻譯快取
+ */
+function handleClearTranslationCache(sendResponse) {
+  if (claudeTranslator) {
+    claudeTranslator.clearCache();
+    console.log('[Background] 翻譯快取已清除');
+    sendResponse({
+      success: true,
+      message: '快取已清除'
+    });
+  } else {
+    sendResponse({
+      success: false,
+      error: '翻譯器未初始化'
+    });
+  }
+}
+
+console.log('[Background] Claude 翻譯功能已載入');
