@@ -43,6 +43,13 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
       targetLanguage = changes.targetLanguage.newValue;
       console.log('[Background] 目標語言已透過儲存設定變更為:', targetLanguage);
     }
+    if (changes.userGlossary) {
+      userGlossary = changes.userGlossary.newValue;
+      console.log('[Background] 使用者字典已更新');
+      if (claudeTranslator) {
+        claudeTranslator.setGlossary(userGlossary);
+      }
+    }
   }
 });
 
@@ -60,12 +67,14 @@ let offscreenDocumentCreated = false;
 // 翻譯設定
 let translationEnabled = false;
 let targetLanguage = 'zh-TW'; // 預設翻譯目標語言
+let userGlossary = ''; // 使用者字典
 
 // 初始化時從 storage 讀取設定
-chrome.storage.sync.get(['translationEnabled', 'targetLanguage'], (result) => {
+chrome.storage.sync.get(['translationEnabled', 'targetLanguage', 'userGlossary'], (result) => {
   translationEnabled = result.translationEnabled || false;
   targetLanguage = result.targetLanguage || 'zh-TW';
-  console.log('[Background] 已從 storage 初始化設定:', { translationEnabled, targetLanguage });
+  userGlossary = result.userGlossary || '';
+  console.log('[Background] 已從 storage 初始化設定:', { translationEnabled, targetLanguage, hasGlossary: !!userGlossary });
 });
 
 // 初始化加密管理器
@@ -421,9 +430,10 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', autoDet
     }
 
     // 1.5 讀取翻譯設定並初始化 Claude 翻譯器（如果啟用）
-    const settings = await chrome.storage.sync.get(['translationEnabled', 'targetLanguage']);
+    const settings = await chrome.storage.sync.get(['translationEnabled', 'targetLanguage', 'userGlossary']);
     translationEnabled = settings.translationEnabled || false;
     targetLanguage = settings.targetLanguage || 'zh-TW';
+    userGlossary = settings.userGlossary || '';
 
     if (translationEnabled) {
       console.log('[Background] 翻譯已啟用，目標語言:', targetLanguage);
@@ -434,9 +444,10 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', autoDet
       if (claudeApiKey) {
         // 初始化 Claude 翻譯器
         claudeTranslator = new ClaudeTranslator(claudeApiKey, {
-          model: 'claude-3-5-haiku-20241022'
+          model: 'claude-haiku-4-5'
         });
-        console.log('[Background] ✅ Claude 翻譯器已初始化');
+        claudeTranslator.setGlossary(userGlossary);
+        console.log('[Background] ✅ Claude 翻譯器已初始化，術語數:', Object.keys(claudeTranslator.glossary).length);
       } else {
         console.warn('[Background] ⚠️ 翻譯已啟用但未設定 Claude API Key，將不進行翻譯');
         translationEnabled = false;
@@ -797,8 +808,14 @@ async function handleTranslateText(text, targetLang, sourceLang, sendResponse) {
 
       if (claudeApiKey) {
         claudeTranslator = new ClaudeTranslator(claudeApiKey, {
-          model: 'claude-3-5-haiku-20241022'
+          model: 'claude-haiku-4-5'
         });
+
+        // 確保加載術語
+        const result = await chrome.storage.sync.get(['userGlossary']);
+        if (result.userGlossary) {
+          claudeTranslator.setGlossary(result.userGlossary);
+        }
       }
     }
 

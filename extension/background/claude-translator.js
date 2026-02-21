@@ -1,7 +1,7 @@
 /**
  * Claude Translator Client
  *
- * 使用 Claude 3.5 Haiku API 進行即時翻譯
+ * 使用 Claude 4.5 Haiku API 進行即時翻譯
  *
  * @class ClaudeTranslator
  * @version 1.1.0
@@ -11,7 +11,7 @@ class ClaudeTranslator {
   constructor(apiKey, config = {}) {
     this.apiKey = apiKey;
     this.config = {
-      model: config.model || 'claude-3-5-haiku-20241022',
+      model: config.model || 'claude-haiku-4-5',
       maxTokens: config.maxTokens || 1024,
       temperature: config.temperature || 0.3, // 較低溫度以獲得更一致的翻譯
       ...config
@@ -87,11 +87,42 @@ class ClaudeTranslator {
 
   /**
    * 設定術語字典
-   * @param {Object} glossary - { '原文': '譯文' }
+   * @param {Object|string} glossary - { '原文': '譯文' } 或 「鍵: 值」格式的字串
    */
   setGlossary(glossary) {
-    this.glossary = glossary || {};
+    if (typeof glossary === 'string') {
+      this.glossary = this._parseGlossaryString(glossary);
+    } else {
+      this.glossary = glossary || {};
+    }
     console.log('[Claude Translator] 術語字典已更新:', Object.keys(this.glossary).length, '個詞彙');
+  }
+
+  /**
+   * 解析術語字串
+   * @private
+   * @param {string} glossaryStr - 「鍵: 值」格式的字串
+   */
+  _parseGlossaryString(glossaryStr) {
+    const glossary = {};
+    if (!glossaryStr) return glossary;
+
+    const lines = glossaryStr.split('\n');
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      if (!trimmedLine) continue;
+
+      // 支援 : 或 = 或 -> 作為分隔符
+      const match = trimmedLine.match(/^(.+?)(?::|=|->)(.+)$/);
+      if (match) {
+        const key = match[1].trim();
+        const value = match[2].trim();
+        if (key && value) {
+          glossary[key] = value;
+        }
+      }
+    }
+    return glossary;
   }
 
   /**
@@ -237,11 +268,11 @@ class ClaudeTranslator {
   _calculateRequestCost(usage) {
     if (!usage) return 0;
 
-    // Claude 3.5 Haiku 定價
-    // Input: $0.25 / 1M tokens
-    // Output: $1.25 / 1M tokens
-    const inputCostPerMToken = 0.25;
-    const outputCostPerMToken = 1.25;
+    // Claude 4.5 Haiku 定價
+    // Input: $1.00 / 1M tokens
+    // Output: $5.00 / 1M tokens
+    const inputCostPerMToken = 1.00;
+    const outputCostPerMToken = 5.00;
 
     const inputCost = (usage.input_tokens / 1000000) * inputCostPerMToken;
     const outputCost = (usage.output_tokens / 1000000) * outputCostPerMToken;
@@ -320,7 +351,7 @@ class ClaudeTranslator {
     try {
       console.log('[Claude Translator] 開始驗證 API Key...');
 
-      // 驗證 Claude 3.5 Haiku
+      // 驗證 Claude 4.5 Haiku
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -330,7 +361,7 @@ class ClaudeTranslator {
           'anthropic-dangerous-direct-browser-access': 'true'
         },
         body: JSON.stringify({
-          model: 'claude-3-5-haiku-20241022',
+          model: 'claude-haiku-4-5',
           max_tokens: 10,
           messages: [
             {
