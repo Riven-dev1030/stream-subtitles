@@ -82,10 +82,25 @@ class DeepgramClient {
       punctuate: this.config.punctuate,
       interim_results: this.config.interimResults,
       model: this.config.model,
-      endpointing: this.config.endpointing
+      endpointing: this.config.endpointing,
+      smart_format: true // 提升術語、數字、標點的格式化品質
     });
 
-    return `wss://api.deepgram.com/v1/listen?${params.toString()}`;
+    let url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
+
+    // 支援多語言辨識 (如 zh-TW,en)
+    if (this.config.language.includes(',')) {
+      const langs = this.config.language.split(',');
+      // 先移除原本的 language
+      params.delete('language');
+      url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
+      // 手動加上多個 language 參數
+      langs.forEach(lang => {
+        url += `&language=${lang.trim()}`;
+      });
+    }
+
+    return url;
   }
 
   /**
