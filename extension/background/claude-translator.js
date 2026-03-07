@@ -11,11 +11,18 @@ class ClaudeTranslator {
   constructor(apiKey, config = {}) {
     this.apiKey = apiKey;
     this.config = {
-      model: config.model || 'claude-haiku-4-5-20251001',
+      model: config.model || 'claude-haiku-4-5',
       maxTokens: config.maxTokens || 1024,
       temperature: config.temperature || 0.3, // 較低溫度以獲得更一致的翻譯
       ...config
     };
+
+    // 上下文歷史 (Sliding Window)
+    this.history = [];
+    this.maxHistory = 3; // 保留最近 3 句作為上下文
+
+    // 專業術語字典
+    this.glossary = {};
 
     // 翻譯快取（避免重複翻譯相同文字）
     this.cache = new Map();
@@ -79,31 +86,86 @@ class ClaudeTranslator {
   }
 
   /**
+   * 設定術語字典
+   * @param {Object|string} glossary - { '原文': '譯文' } 或 「鍵: 值」格式的字串
+   */
+  setGlossary(glossary) {
+    if (typeof glossary === 'string') {
+      this.glossary = this._parseGlossaryString(glossary);
+    } else {
+      this.glossary = glossary || {};
+    }
+    console.log('[Claude Translator] 術語字典已更新:', Object.keys(this.glossary).length, '個詞彙');
+  }
+
+  /**
+   * 解析術語字串
+   * @private
+   * @param {string} glossaryStr - 「鍵: 值」格式的字串
+   */
+  _parseGlossaryString(glossaryStr) {
+    const glossary = {};
+    if (!glossaryStr) return glossary;
+
+    const lines = glossaryStr.split('\n');
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      if (!trimmedLine) continue;
+
+      // 支援 : 或 = 或 -> 作為分隔符
+      const match = trimmedLine.match(/^(.+?)(?::|=|->)(.+)$/);
+      if (match) {
+        const key = match[1].trim();
+        const value = match[2].trim();
+        if (key && value) {
+          glossary[key] = value;
+        }
+      }
+    }
+    return glossary;
+  }
+
+  /**
    * 呼叫 Claude API
    * @private
    */
   async _callClaudeAPI(text, targetLang, sourceLang) {
     const targetLangName = this._getLanguageName(targetLang);
-    const sourceLangHint = sourceLang ? `（原文語言：${this._getLanguageName(sourceLang)}）` : '';
+    const sourceLangHint = sourceLang ? `（原文：${this._getLanguageName(sourceLang)}）` : '';
+
+    // 構建術語提示
+    let glossaryHint = '';
+    const glossaryEntries = Object.entries(this.glossary);
+    if (glossaryEntries.length > 0) {
+      glossaryHint = `\n請遵守以下專業術語對照：\n${glossaryEntries.map(([k, v]) => `- ${k} -> ${v}`).join('\n')}\n`;
+    }
+
+    // 構建上下文提示
+    let contextHint = '';
+    if (this.history.length > 0) {
+      contextHint = `\n前文回顧（僅供參考上下文，不要重複翻譯）：\n${this.history.map(h => `原文：${h.src}\n譯文：${h.tgt}`).join('\n')}\n`;
+    }
 
     // 建構提示詞
-    const prompt = `請將以下文字翻譯成${targetLangName}${sourceLangHint}。
+    const systemPrompt = `你是一位專業的即時字幕翻譯員，負責將語音辨識結果翻譯成${targetLangName}。
 要求：
-1. 保持原文的語氣和風格（如果是口語就保持口語化）
-2. 只回傳翻譯結果，不要有任何額外說明
-3. 如果原文有專業術語，請保留或用括號註解
+1. 保持口語化、流暢且符合${targetLangName}習慣。
+2. 嚴格遵守提供的專業術語字典。
+3. 參考前文上下文，確保代名詞和術語的一致性。
+4. **只回傳翻譯結果**，不要有任何解釋、標點修正說明或括號。
+5. 如果原文中夾雜技術英文術語（如 code, PR, deploy），若無特定對照請保留英文，不要強行翻譯。`;
 
-原文：
-${text}`;
+    const userPrompt = `${contextHint}${glossaryHint}\n請翻譯以下這句話：\n${text}`;
 
     const requestBody = {
       model: this.config.model,
       max_tokens: this.config.maxTokens,
       temperature: this.config.temperature,
+      system: systemPrompt,
       messages: [
         {
           role: 'user',
-          content: prompt
+          content: userPrompt
         }
       ]
     };
@@ -142,6 +204,14 @@ ${text}`;
 
     // 提取翻譯結果
     const translatedText = data.content?.[0]?.text?.trim() || '';
+
+    // 更新歷史 (Sliding Window)
+    if (translatedText) {
+      this.history.push({ src: text, tgt: translatedText });
+      if (this.history.length > this.maxHistory) {
+        this.history.shift();
+      }
+    }
 
     return translatedText;
   }
@@ -198,9 +268,11 @@ ${text}`;
   _calculateRequestCost(usage) {
     if (!usage) return 0;
 
-    // Claude 4.5 Haiku 定價（2025）
-    const inputCostPerMToken = 0.8;  // $0.80 per MTok
-    const outputCostPerMToken = 4.0; // $4.00 per MTok
+    // Claude 4.5 Haiku 定價
+    // Input: $1.00 / 1M tokens
+    // Output: $5.00 / 1M tokens
+    const inputCostPerMToken = 1.00;
+    const outputCostPerMToken = 5.00;
 
     const inputCost = (usage.input_tokens / 1000000) * inputCostPerMToken;
     const outputCost = (usage.output_tokens / 1000000) * outputCostPerMToken;
@@ -244,6 +316,14 @@ ${text}`;
   }
 
   /**
+   * 清除上下文歷史
+   */
+  clearHistory() {
+    this.history = [];
+    console.log('[Claude Translator] 上下文歷史已清除');
+  }
+
+  /**
    * 重設統計
    */
   resetStats() {
@@ -271,8 +351,8 @@ ${text}`;
     try {
       console.log('[Claude Translator] 開始驗證 API Key...');
 
-      // 先嘗試 Claude 4.5 Haiku
-      let response = await fetch('https://api.anthropic.com/v1/messages', {
+      // 驗證 Claude 4.5 Haiku
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
           'x-api-key': apiKey.trim(),
@@ -281,7 +361,7 @@ ${text}`;
           'anthropic-dangerous-direct-browser-access': 'true'
         },
         body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
+          model: 'claude-haiku-4-5',
           max_tokens: 10,
           messages: [
             {
@@ -291,33 +371,6 @@ ${text}`;
           ]
         })
       });
-
-      // 如果 Claude 4.5 失敗，嘗試 Claude 3.5 Haiku 作為備用
-      if (!response.ok && response.status === 401) {
-        console.warn('[Claude Translator] Claude 4.5 驗證失敗，嘗試 Claude 3.5 Haiku...');
-
-        response = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'x-api-key': apiKey.trim(),
-            'anthropic-version': '2023-06-01',
-            'content-type': 'application/json',
-            'anthropic-dangerous-direct-browser-access': 'true'
-          },
-          body: JSON.stringify({
-            model: 'claude-3-5-haiku-20241022',
-            max_tokens: 10,
-            messages: [
-              {
-                role: 'user',
-                content: 'Hi'
-              }
-            ]
-          })
-        });
-
-        console.log('[Claude Translator] Claude 3.5 回應狀態:', response.status);
-      }
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
