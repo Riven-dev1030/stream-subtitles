@@ -252,13 +252,13 @@ async function handleMessage(message, sender, sendResponse) {
         break;
 
       case 'getStatus':
-        // 取得狀態 - 從 storage 讀取用戶選擇的引擎
-        chrome.storage.sync.get(['recognitionEngine'], (result) => {
+        // 取得狀態 - 從 storage 讀取用戶選擇的引擎與語言設定
+        chrome.storage.sync.get(['recognitionEngine', 'language', 'autoDetect'], (result) => {
           const selectedEngine = result.recognitionEngine || 'webspeech';
           const statusResponse = {
             isRecording: isDeepgramActive, // Deepgram 運行狀態
-            currentLanguage: 'zh-TW',
-            autoDetect: false,
+            currentLanguage: result.language || 'zh-TW',
+            autoDetect: result.autoDetect || false,
             isDeepgramActive: isDeepgramActive,
             currentEngine: selectedEngine // 使用用戶選擇的引擎，而不是根據運行狀態判斷
           };
@@ -458,13 +458,16 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', autoDet
     }
 
     // 2. 初始化 DeepgramClient
-    // 如果選取繁體中文或自動檢測，我們預設開啟 zh-TW 與 en 的混合辨識，以優化技術名詞
+    // 針對台灣習慣優化：如果是繁體中文，預設開啟 zh-TW 與 en 的混合辨識 (Code-switching)
     let actualLanguage = language;
-    if (autoDetect || language === 'zh-TW') {
+    if (autoDetect) {
+      actualLanguage = 'multi';
+    } else if (language === 'zh-TW') {
+      // 雖然設為 zh-TW,en，但 DeepgramClient 會將其轉換為 language=multi 以支援混合辨識
       actualLanguage = 'zh-TW,en';
     }
 
-    console.log('[Background] 初始化 Deepgram Client，語言:', actualLanguage, autoDetect ? '(多語言自動檢測)' : '');
+    console.log('[Background] 初始化 Deepgram Client，語言設定:', actualLanguage, autoDetect ? '(自動檢測)' : '');
     console.log('[Background] API Key 前綴:', apiKey ? apiKey.substring(0, 10) + '...' : 'null');
 
     // **關鍵修復：總是創建新的 DeepgramClient，確保乾淨狀態**

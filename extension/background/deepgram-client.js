@@ -78,7 +78,6 @@ class DeepgramClient {
     const params = new URLSearchParams({
       encoding: this.config.encoding,
       sample_rate: this.config.sampleRate,
-      language: this.config.language,
       punctuate: this.config.punctuate,
       interim_results: this.config.interimResults,
       model: this.config.model,
@@ -86,21 +85,27 @@ class DeepgramClient {
       smart_format: true // 提升術語、數字、標點的格式化品質
     });
 
-    let url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
+    // 處理語言參數
+    // Deepgram 支援多種多語言模式：
+    // 1. 單一語言：language=zh-TW
+    // 2. 多語言混合 (Nova-2/3)：language=multi (最推薦)
+    // 3. 多語言指定：同時傳入多個 language 參數 (fallback)
 
-    // 支援多語言辨識 (如 zh-TW,en)
-    if (this.config.language.includes(',')) {
-      const langs = this.config.language.split(',');
-      // 先移除原本的 language
-      params.delete('language');
-      url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
-      // 手動加上多個 language 參數
-      langs.forEach(lang => {
-        url += `&language=${lang.trim()}`;
-      });
+    if (this.config.language === 'multi' || (this.config.language && this.config.language.includes(','))) {
+      // 優先使用 language=multi 啟動混合語言辨識
+      params.set('language', 'multi');
+
+      // 為了向下相容或特定環境，我們同時傳入具體的語言標籤
+      if (this.config.language.includes(',')) {
+        this.config.language.split(',').forEach(lang => {
+          params.append('language', lang.trim());
+        });
+      }
+    } else {
+      params.set('language', this.config.language);
     }
 
-    return url;
+    return `wss://api.deepgram.com/v1/listen?${params.toString()}`;
   }
 
   /**
