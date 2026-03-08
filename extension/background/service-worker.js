@@ -50,7 +50,7 @@ let targetLanguage = 'zh-TW'; // 預設翻譯目標語言
 // 碎片合併設定
 let finalBuffer = [];       // 暫存連續的 final 碎片
 let mergeTimer = null;      // debounce 計時器
-const MERGE_DELAY = 400;    // 400ms 內的連續 final 視為同一句
+const MERGE_DELAY = 250;    // 250ms 內的連續 final 視為同一句（endpointing 100ms + 網路緩衝）
 
 // 初始化加密管理器
 async function initCryptoManager() {
