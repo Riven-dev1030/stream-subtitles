@@ -47,6 +47,11 @@ let offscreenDocumentCreated = false;
 let translationEnabled = false;
 let targetLanguage = 'zh-TW'; // 預設翻譯目標語言
 
+// 碎片合併設定
+let finalBuffer = [];       // 暫存連續的 final 碎片
+let mergeTimer = null;      // debounce 計時器
+const MERGE_DELAY = 400;    // 400ms 內的連續 final 視為同一句
+
 // 初始化加密管理器
 async function initCryptoManager() {
   if (!cryptoManager) {
@@ -438,45 +443,93 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', autoDet
         console.log('[Background] 檢測到語言:', result.language, '信心度:', result.languageConfidence);
       }
 
-      // 準備要轉發的結果
-      const resultToSend = {
+      if (!result.isFinal) {
+        // ========== Interim 結果：立即轉發，不翻譯 ==========
+        chrome.tabs.sendMessage(tabId, {
+          action: 'deepgramResult',
+          result: {
+            text: result.text,
+            isFinal: false,
+            confidence: result.confidence,
+            timestamp: result.timestamp,
+            language: result.language,
+            languageConfidence: result.languageConfidence,
+            translatedText: null
+          }
+        }).catch(err => {
+          console.error('[Background] 轉發 Interim 到 Content Script 失敗:', err);
+        });
+        return;
+      }
+
+      // ========== Final 結果：加入 buffer，debounce 合併後再翻譯 ==========
+      finalBuffer.push({
         text: result.text,
-        isFinal: result.isFinal,
         confidence: result.confidence,
         timestamp: result.timestamp,
         language: result.language,
-        languageConfidence: result.languageConfidence,
-        translatedText: null  // 翻譯文字（如果有）
-      };
+        languageConfidence: result.languageConfidence
+      });
 
-      // 如果啟用翻譯且有 Claude 翻譯器，則進行翻譯
-      if (translationEnabled && claudeTranslator && result.text) {
-        try {
-          console.log('[Background] 開始翻譯:', result.text.substring(0, 30) + '...');
-          const sourceLang = result.language || null;
-          const translationResult = await claudeTranslator.translate(
-            result.text,
-            targetLanguage,
-            sourceLang
-          );
+      console.log('[Background] Final 加入 buffer，目前', finalBuffer.length, '個碎片');
 
-          resultToSend.translatedText = translationResult.translatedText;
-
-          console.log('[Background] 翻譯完成:', translationResult.cached ? '(快取)' : '(API)',
-                      translationResult.translatedText.substring(0, 30) + '...');
-        } catch (error) {
-          console.error('[Background] 翻譯失敗:', error);
-          // 翻譯失敗不影響原文顯示
-        }
+      // 重設 debounce 計時器
+      if (mergeTimer) {
+        clearTimeout(mergeTimer);
       }
 
-      // 轉發結果到 Content Script（包含翻譯）
-      chrome.tabs.sendMessage(tabId, {
-        action: 'deepgramResult',
-        result: resultToSend
-      }).catch(err => {
-        console.error('[Background] 轉發結果到 Content Script 失敗:', err);
-      });
+      mergeTimer = setTimeout(async () => {
+        if (finalBuffer.length === 0) return;
+
+        // 合併所有碎片
+        const mergedText = finalBuffer.map(f => f.text).join('');
+        const lastFragment = finalBuffer[finalBuffer.length - 1];
+        const avgConfidence = finalBuffer.reduce((sum, f) => sum + f.confidence, 0) / finalBuffer.length;
+
+        console.log('[Background] 合併', finalBuffer.length, '個碎片:', mergedText.substring(0, 40) + (mergedText.length > 40 ? '...' : ''));
+
+        // 清空 buffer
+        finalBuffer = [];
+
+        // 準備合併後的結果
+        const mergedResult = {
+          text: mergedText,
+          isFinal: true,
+          confidence: avgConfidence,
+          timestamp: lastFragment.timestamp,
+          language: lastFragment.language,
+          languageConfidence: lastFragment.languageConfidence,
+          translatedText: null
+        };
+
+        // 翻譯合併後的完整句子（而非每個碎片）
+        if (translationEnabled && claudeTranslator && mergedText) {
+          try {
+            console.log('[Background] 開始翻譯合併文字:', mergedText.substring(0, 30) + '...');
+            const sourceLang = lastFragment.language || null;
+            const translationResult = await claudeTranslator.translate(
+              mergedText,
+              targetLanguage,
+              sourceLang
+            );
+
+            mergedResult.translatedText = translationResult.translatedText;
+
+            console.log('[Background] 翻譯完成:', translationResult.cached ? '(快取)' : '(API)',
+                        translationResult.translatedText.substring(0, 30) + '...');
+          } catch (error) {
+            console.error('[Background] 翻譯失敗:', error);
+          }
+        }
+
+        // 轉發合併結果到 Content Script
+        chrome.tabs.sendMessage(tabId, {
+          action: 'deepgramResult',
+          result: mergedResult
+        }).catch(err => {
+          console.error('[Background] 轉發合併結果到 Content Script 失敗:', err);
+        });
+      }, MERGE_DELAY);
     };
 
     // 4. 設定 Deepgram 錯誤回調
@@ -565,6 +618,13 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', autoDet
 async function handleStopDeepgramRecognition(sendResponse) {
   try {
     console.log('[Background] 停止 Deepgram 語音辨識');
+
+    // 清理碎片合併 buffer 和計時器
+    if (mergeTimer) {
+      clearTimeout(mergeTimer);
+      mergeTimer = null;
+    }
+    finalBuffer = [];
 
     // **關鍵修復：立即更新狀態，避免狀態不一致**
     isDeepgramActive = false;

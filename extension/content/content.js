@@ -601,7 +601,27 @@ function displaySubtitle(text, isFinal, language = null, translatedText = null) 
 
       updateSubtitleDisplay();
     } else {
-      console.log('[Content] ⚠️ 找不到對應的 Interim，Final 可能太晚到達');
+      // 找不到對應的 Interim，直接加入 buffer（不丟棄）
+      console.log('[Content] ⚠️ 找不到對應的 Interim，直接加入 buffer');
+
+      let finalText = normalized;
+      const currentChars = displayBuffer.reduce((sum, item) => sum + item.text.length, 0);
+      const maxAllowed = MAX_TOTAL_CHARS - currentChars;
+
+      if (normalized.length > maxAllowed) {
+        cleanupBeforeAdd([normalized]);
+        finalText = normalized.slice(-MAX_TOTAL_CHARS);
+      }
+
+      displayBuffer.push({
+        text: finalText,
+        timestamp: Date.now(),
+        source: 'final',
+        language: language,
+        translatedText: translatedText
+      });
+
+      updateSubtitleDisplay();
     }
 
     // 存入歷史記錄
@@ -693,23 +713,33 @@ function displaySubtitle(text, isFinal, language = null, translatedText = null) 
   }
 }
 
-// 計算兩個字串的相似度（簡單版本：基於最長公共子序列）
+// 計算兩個字串的相似度（基於 Levenshtein 編輯距離）
 function calculateSimilarity(str1, str2) {
   if (!str1 || !str2) return 0;
   if (str1 === str2) return 1;
 
   const longer = str1.length > str2.length ? str1 : str2;
   const shorter = str1.length > str2.length ? str2 : str1;
+  const editDist = levenshteinDistance(shorter, longer);
+  return 1 - editDist / longer.length;
+}
 
-  // 簡單的相似度計算：看短的字串有多少比例包含在長的字串中
-  let matches = 0;
-  for (let i = 0; i < shorter.length; i++) {
-    if (longer.includes(shorter[i])) {
-      matches++;
+// Levenshtein 編輯距離（空間優化版，只用一維陣列）
+function levenshteinDistance(s1, s2) {
+  const m = s1.length, n = s2.length;
+  const dp = Array.from({ length: m + 1 }, (_, i) => i);
+  for (let j = 1; j <= n; j++) {
+    let prev = dp[0];
+    dp[0] = j;
+    for (let i = 1; i <= m; i++) {
+      const temp = dp[i];
+      dp[i] = s1[i - 1] === s2[j - 1]
+        ? prev
+        : 1 + Math.min(prev, dp[i - 1], dp[i]);
+      prev = temp;
     }
   }
-
-  return matches / longer.length;
+  return dp[m];
 }
 
 // 智能斷句 - 將長文字切分成多個短句

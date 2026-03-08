@@ -23,6 +23,7 @@ class DeepgramClient {
       sampleRate: config.sampleRate || 16000,
       model: config.model || 'nova-2', // 使用 nova-2 支援更好的辨識品質
       endpointing: config.endpointing || 100, // 用於 code-switching，建議 100ms
+      smartFormat: config.smartFormat !== undefined ? config.smartFormat : true, // 智慧格式化數字、日期等
       ...config
     };
 
@@ -82,7 +83,8 @@ class DeepgramClient {
       punctuate: this.config.punctuate,
       interim_results: this.config.interimResults,
       model: this.config.model,
-      endpointing: this.config.endpointing
+      endpointing: this.config.endpointing,
+      smart_format: this.config.smartFormat
     });
 
     return `wss://api.deepgram.com/v1/listen?${params.toString()}`;
