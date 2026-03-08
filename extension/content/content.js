@@ -10,6 +10,13 @@ let interimSubtitle = '';
 let subtitleHistory = []; // 儲存字幕歷史
 let editModal = null; // 編輯視窗
 
+// 字幕檔案輸出
+let fileHandle = null;          // File System Access API handle
+let outputTimer = null;         // 定時寫入計時器
+let isOutputEnabled = false;    // 輸出開關
+const SUBTITLE_OUTPUT_INTERVAL = 2000; // 每 2 秒更新檔案
+const SUBTITLE_OUTPUT_WINDOW = 30000;  // 30 秒滾動視窗
+
 // 顯示緩衝區 - 保存最近的句子用於滾動顯示
 let displayBuffer = []; // 最多保存 3 句
 const MAX_DISPLAY_SENTENCES = 3;
@@ -352,6 +359,7 @@ function createSubtitleUI() {
     <div class="subtitle-content">
       <div class="subtitle-text"></div>
       <button class="edit-btn" title="修正字幕">✏️</button>
+      <button class="output-btn" title="輸出字幕檔">📄</button>
     </div>
   `;
   document.body.appendChild(subtitleContainer);
@@ -407,6 +415,27 @@ function bindControlEvents() {
     if (displayBuffer.length > 0) {
       const latestSentence = displayBuffer[displayBuffer.length - 1].text;
       showEditModal(latestSentence);
+    }
+  });
+
+  // 輸出按鈕 - 持續輸出字幕到檔案
+  const outputBtn = subtitleContainer.querySelector('.output-btn');
+  outputBtn.addEventListener('click', async () => {
+    if (isOutputEnabled) {
+      stopSubtitleOutput();
+      outputBtn.classList.remove('active');
+      showToast('字幕檔案輸出已停止');
+    } else {
+      try {
+        await startSubtitleOutput();
+        outputBtn.classList.add('active');
+        showToast('字幕檔案輸出已開始');
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error('[Content] 開啟檔案輸出失敗:', err);
+          showToast('開啟檔案輸出失敗: ' + err.message);
+        }
+      }
     }
   });
 }
@@ -628,7 +657,8 @@ function displaySubtitle(text, isFinal, language = null, translatedText = null) 
     subtitleHistory.push({
       text: normalized,
       timestamp: Date.now(),
-      language: currentLanguage
+      language: currentLanguage,
+      translatedText: translatedText || null
     });
 
     if (subtitleHistory.length > 50) {
@@ -1158,6 +1188,80 @@ function displayError(errorMessage) {
       subtitleText.innerHTML = '';
     }
   }, 3000);
+}
+
+// ============================================
+// 字幕檔案輸出
+// ============================================
+
+/**
+ * 開始字幕檔案輸出
+ * 使用 File System Access API 讓使用者選擇檔案位置
+ */
+async function startSubtitleOutput() {
+  fileHandle = await window.showSaveFilePicker({
+    suggestedName: '字幕輸出.txt',
+    types: [{ description: 'Text', accept: { 'text/plain': ['.txt'] } }]
+  });
+  isOutputEnabled = true;
+  // 立即寫入一次
+  await writeSubtitlesToFile();
+  // 定時寫入
+  outputTimer = setInterval(writeSubtitlesToFile, SUBTITLE_OUTPUT_INTERVAL);
+  console.log('[Content] 字幕檔案輸出已開始');
+}
+
+/**
+ * 停止字幕檔案輸出
+ */
+function stopSubtitleOutput() {
+  isOutputEnabled = false;
+  if (outputTimer) {
+    clearInterval(outputTimer);
+    outputTimer = null;
+  }
+  fileHandle = null;
+  console.log('[Content] 字幕檔案輸出已停止');
+}
+
+/**
+ * 取得最近 30 秒的字幕
+ */
+function getRecentSubtitles() {
+  const cutoff = Date.now() - SUBTITLE_OUTPUT_WINDOW;
+  return subtitleHistory.filter(s => s.timestamp >= cutoff);
+}
+
+/**
+ * 寫入字幕到檔案（每 2 秒覆寫一次）
+ */
+async function writeSubtitlesToFile() {
+  if (!fileHandle || !isOutputEnabled) return;
+
+  try {
+    const recent = getRecentSubtitles();
+    // 格式：每行一句，有翻譯時附在後面
+    const lines = recent.map(s => {
+      if (s.translatedText) {
+        return `${s.text} | ${s.translatedText}`;
+      }
+      return s.text;
+    });
+    const content = lines.join('\n');
+
+    const writable = await fileHandle.createWritable();
+    await writable.write(content);
+    await writable.close();
+  } catch (err) {
+    console.error('[Content] 寫入字幕檔案失敗:', err);
+    // 如果權限被撤銷或檔案被刪除，自動停止
+    if (err.name === 'NotAllowedError' || err.name === 'NotFoundError') {
+      stopSubtitleOutput();
+      const outputBtn = subtitleContainer?.querySelector('.output-btn');
+      if (outputBtn) outputBtn.classList.remove('active');
+      showToast('字幕檔案輸出已自動停止（檔案不可寫入）');
+    }
+  }
 }
 
 // ============================================

@@ -160,6 +160,36 @@
   transform: scale(0.95);
 }
 
+/* 輸出按鈕 */
+.output-btn {
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #ffffff;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 18px;
+  transition: all 0.2s ease;
+  outline: none;
+  flex-shrink: 0;
+  pointer-events: auto;
+}
+
+.output-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: scale(1.1);
+}
+
+.output-btn:active {
+  transform: scale(0.95);
+}
+
+.output-btn.active {
+  background: rgba(76, 175, 80, 0.6);
+  border-color: #4CAF50;
+  animation: pulse 1.5s infinite;
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;
