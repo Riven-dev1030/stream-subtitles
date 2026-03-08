@@ -1,11 +1,11 @@
 # Stream-Subtitles 軟體設計文件 (Software Design Document)
 
-**版本**: 3.0
+**版本**: 3.2
 **文件建立日期**: 2025-11-21
-**最後更新**: 2025-12-22
-**作者**: Claude AI Assistant
-**專案狀態**: Phase 3 進行中 (Phase 3.1 - Claude 翻譯集成)
-**重大更新**: Phase 3.1 - Claude AI 即時翻譯整合 (2025-12-22)
+**最後更新**: 2026-03-08
+**作者**: Claude AI Assistant (Jules)
+**專案狀態**: Phase 3.2 已完成 (上下文感知翻譯與術語表)
+**重大更新**: Phase 3.2 - Claude 4.5 升級、3 句滑動視窗歷史、使用者術語表 (2026-03-08)
 
 ---
 
@@ -49,15 +49,16 @@
 ✅ **引擎自由切換**: 使用者可隨時切換辨識引擎，無需重啟
 ✅ **零外部依賴 (Web Speech API)**: 使用瀏覽器內建 API，免費無需 API 金鑰
 ✅ **高精度選項 (Deepgram)**: 專業級語音辨識，適合追求高準確度的場景
-✅ **Claude AI 即時翻譯** (NEW Phase 3.1): 雙語字幕顯示，支援原文 + Claude 翻譯
+✅ **Claude 4.5 即時翻譯** (NEW Phase 3.2): 雙語字幕顯示，使用 Claude 4.5 Haiku 模型
 ✅ **Manifest V3 相容**: 完全遵循 Chrome Extension Manifest V3 規範
 
 #### 字幕處理
+✅ **上下文感知翻譯** (NEW Phase 3.2): 3 句滑動視窗歷史，讓翻譯更符合前後文
+✅ **使用者術語表 (Glossary)** (NEW Phase 3.2): 支援自定義專業術語，強制 AI 遵守譯名
 ✅ **智能字幕處理**: Interim 主導架構，解決 Final 結果延遲問題
 ✅ **自動斷句**: 智能識別語句邊界，提供流暢的閱讀體驗
 ✅ **心跳檢測**: 自動監控 Speech API 狀態，異常時自動重啟
 ✅ **字數限制**: 動態字數管理，防止字幕過度累積
-✅ **關鍵字學習**: （選配）支援自定義關鍵字優化辨識準確度
 
 #### 安全性
 ✅ **API Key 加密**: AES-GCM-256 加密儲存多個 API Key（Deepgram + Claude）
@@ -647,6 +648,8 @@ async function sendMessageWithRetry(message, maxRetries = 3) {
 ├─────────────────────────────────────┤
 │  • API Key 管理與加密               │
 │  • API 金鑰驗證（4.5→3.5 備用）     │
+│  • 上下文感知（3 句滑動視窗歷史）   │
+│  • 術語表 (Glossary) 動態注入       │
 │  • 翻譯請求與快取                   │
 │  • CORS 安全標準實現                │
 │  • 成本統計與監控                   │
@@ -661,11 +664,17 @@ class ClaudeTranslator {
   constructor(apiKey, config = {}) {
     this.apiKey = apiKey;
     this.config = {
-      model: 'claude-haiku-4-5-20251001',  // Claude 4.5 Haiku
+      model: 'claude-haiku-4-5',  // Claude 4.5 Haiku
       maxTokens: 1024,
       temperature: 0.3,  // 低溫度確保翻譯一致性
       ...config
     };
+
+    // 歷史紀錄（用於提供上下文）
+    this.history = []; // 儲存最近 3 次翻譯 [ { source, target } ]
+
+    // 術語表
+    this.glossary = {};
 
     // 翻譯快取（避免重複翻譯相同文字）
     this.cache = new Map();  // 最多 500 個條目
@@ -2684,41 +2693,25 @@ describe('E2E: Subtitle Display', () => {
 
 | 版本 | 日期 | 變更內容 | 作者 |
 |------|------|---------|------|
-| **2.1** | **2025-12-05** | **Phase 2.1 更新**：核心架構穩定性修復 | Claude AI |
-|     |            | **性能優化**：| |
-|     |            | • ✅ 使用 AudioWorkletNode 替換已棄用的 ScriptProcessorNode | |
-|     |            | • ✅ Transferable Objects 零拷貝傳輸 | |
-|     |            | • ✅ 消除 UI 凍結問題（2-3 秒 → 0 秒） | |
-|     |            | **競態條件修復**：| |
-|     |            | • ✅ 修復停止後重啟導致頁面當掉的問題 | |
-|     |            | • ✅ 等待資源完全釋放（500ms 緩衝） | |
-|     |            | • ✅ WebSocket 立即關閉（移除延遲） | |
-|     |            | • ✅ 強制重建 Offscreen Document | |
-|     |            | • ✅ 每次啟動建立新 DeepgramClient | |
-|     |            | **Tab 生命週期管理**：| |
-|     |            | • ✅ 修復頁面刷新無法停止 Deepgram 的問題 | |
-|     |            | • ✅ 修正 changeInfo.status === 'loading' 檢測邏輯 | |
-|     |            | **停止功能修復**：| |
-|     |            | • ✅ 修復停止按鈕無法停止 Deepgram 的問題 | |
-|     |            | • ✅ Content Script 檢測 Deepgram 並通知 Service Worker | |
-|     |            | **狀態同步機制**：| |
-|     |            | • ✅ 修復主介面與小介面狀態不同步問題 | |
-|     |            | • ✅ 新增 deepgramStarted/deepgramStopped 通知 | |
-|     |            | • ✅ 修正 getStatus 從 storage 讀取引擎設定 | |
-|     |            | • ✅ Popup 狀態輪詢檢測引擎變更 | |
-|     |            | **文檔更新**：| |
-|     |            | • ✅ 新增 AudioWorklet 架構說明 | |
-|     |            | • ✅ 新增競態條件處理章節 | |
-|     |            | • ✅ 新增 Tab 生命週期管理章節 | |
-|     |            | • ✅ 新增狀態同步機制章節 | |
+| **3.2** | **2026-03-08** | **Phase 3.2 更新**：上下文感知翻譯與術語表 | Jules (Claude AI) |
+|     |            | **翻譯引擎升級**：| |
+|     |            | • ✅ 升級至 Claude 4.5 Haiku 模型 | |
+|     |            | • ✅ 實作 3 句滑動視窗歷史，提供對話上下文 | |
+|     |            | • ✅ 新增使用者術語表 (Glossary) 功能 | |
+|     |            | **語音辨識優化**：| |
+|     |            | • ✅ 優化 Deepgram 混合語言辨識語法 (zh-TW,en) | |
+|     |            | • ✅ 啟用 `language=multi` 以支援台灣口語代碼切換 | |
+|     |            | **效能優化**：| |
+|     |            | • ✅ 僅針對 Final 結果進行翻譯，節省 API 成本 | |
+|     |            | • ✅ 優化儲存同步與 UI 反應速度 | |
+| 3.1 | 2025-12-22 | **Phase 3.1 更新**：Claude 翻譯整合 | Claude AI |
+|     |            | • ✅ Claude API 完全集成 | |
+|     |            | • ✅ API Key 加密儲存 | |
+|     |            | • ✅ 雙語字幕顯示功能 | |
+| 2.1 | 2025-12-05 | **Phase 2.1 更新**：核心架構穩定性修復 | Claude AI |
+|     |            | • ✅ 使用 AudioWorkletNode | |
+|     |            | • ✅ 修復競態條件與狀態同步 | |
 | 2.0 | 2025-12-04 | **Phase 2 更新**：Deepgram 雙引擎整合 | Claude AI |
-|     |            | • 新增 Deepgram WebSocket 客戶端 | |
-|     |            | • 新增 AudioCaptureManager 音訊捕獲模組 | |
-|     |            | • 新增 CryptoManager API Key 加密管理 | |
-|     |            | • 新增引擎切換 UI（Web Speech API / Deepgram）| |
-|     |            | • 更新系統架構圖為雙引擎架構 | |
-|     |            | • 新增 tabCapture 權限 | |
-|     |            | • 新增安全性章節（API Key 加密）| |
 | 1.0 | 2025-11-21 | 初始版本建立（Web Speech API 單引擎）| Claude AI |
 
 ### 14.5 貢獻者

@@ -40,6 +40,7 @@ The `stream-subtitles` project handles real-time subtitle generation, processing
 - Offscreen Document (audio processing)
 - Popup UI (user controls and configuration)
 - CryptoManager (AES-GCM-256 encryption for API keys)
+- **ClaudeTranslator**: Context-aware translation with sliding window and glossary support
 
 **APIs Used:**
 - Deepgram WebSocket API (`wss://api.deepgram.com/v1/listen`)
@@ -48,7 +49,8 @@ The `stream-subtitles` project handles real-time subtitle generation, processing
 ### Project Goals
 - **Real-time Subtitles**: Provide low-latency, streaming subtitles for video content
 - **Multi-Engine Support**: Support both Web Speech API and Deepgram with easy switching
-- **Bilingual Output**: Real-time translation with Claude API for Chinese, English, Japanese, etc.
+- **Context-Aware Translation**: High-quality bilingual output using Claude 4.5 Haiku
+- **User Glossary**: Customizable terminology control for technical consistency
 - **User-Friendly**: Simple, intuitive UI with one-click activation
 - **Security**: Encrypted API key storage with PBKDF2 + AES-GCM-256
 - **Performance**: Minimal browser performance impact, efficient caching
@@ -359,7 +361,7 @@ This is Anthropic's security mechanism for browser-based API access. Without it,
 **Cost Monitoring:**
 - ClaudeTranslator tracks tokens and costs automatically
 - Call `translator.getStats()` to get current usage
-- Pricing: $0.80 per 1M input tokens, $4.00 per 1M output tokens (Haiku 4.5)
+- Pricing: $1.00 per 1M input tokens, $5.00 per 1M output tokens (Claude 4.5 Haiku)
 - Set reasonable `maxTokens` limits to control costs
 
 ### Debugging Speech Recognition Issues
@@ -569,16 +571,16 @@ Before committing changes, verify:
 
 ## Maintenance Notes
 
-**Last Updated**: 2025-12-22
-**Phase**: 3.1 (Claude AI Translation Implementation Complete)
-**Maintainer**: Claude AI Assistant
+**Last Updated**: 2026-03-08
+**Phase**: 3.2 (Context-Aware Translation & Glossary Support)
+**Maintainer**: Jules (Claude AI Assistant)
 
-### Recent Updates (2025-12-22)
-- Updated Tech Stack to reflect Chrome Extension architecture with Web Speech API, Deepgram, and Claude API
-- Updated Repository Structure with actual file/directory organization
-- Added Claude API implementation guide (setup, critical CORS header, cost monitoring)
-- Added comprehensive troubleshooting for Claude API errors, speech recognition, and subtitle display
-- Enhanced "Understanding the Codebase" with Chrome Extension Manifest V3 specifics
+### Recent Updates (2026-03-08)
+- **Claude 4.5 Upgrade**: Transitioned to Claude 4.5 Haiku with 3-sentence sliding window context for improved translation consistency.
+- **User Glossary**: Implemented custom terminology support allowing users to define strict "Key: Value" mappings in the popup.
+- **Deepgram Optimization**: Refined multi-language recognition syntax (`language=multi` + hints) for Taiwanese mixed Mandarin/English code-switching.
+- **Performance Tuning**: Optimized translation triggers to only process final results, reducing API overhead and UI flickering.
+- **Documentation**: Updated `CLAUDE.md` and `DEVLOG.md` to reflect the latest architectural and feature changes.
 
 ### Update Checklist
 
