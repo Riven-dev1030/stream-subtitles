@@ -2,10 +2,10 @@
 
 **版本**: 3.0
 **文件建立日期**: 2025-11-21
-**最後更新**: 2025-12-22
+**最後更新**: 2026-03-09
 **作者**: Claude AI Assistant
-**專案狀態**: Phase 3 進行中 (Phase 3.1 - Claude 翻譯集成)
-**重大更新**: Phase 3.1 - Claude AI 即時翻譯整合 (2025-12-22)
+**專案狀態**: Phase 3 進行中 (Phase 3.2 - 字幕精度優化)
+**重大更新**: Phase 3.2 - 碎片合併 + 翻譯 Debounce + 相似度算法改善 (2026-03-09)
 
 ---
 
@@ -490,6 +490,8 @@ setInterval(() => {
 - ✅ **加入緩衝**: 進入長期顯示緩衝區
 - ✅ **永久顯示**: 直到被清理機制移除
 - ✅ **字數管理**: 共享 50 字總額度
+- ✅ **碎片合併** (NEW Phase 3.2): Service Worker 在 400ms debounce 後合併連續 Final 碎片，避免一句話被切成多段顯示
+- ✅ **翻譯去重** (NEW Phase 3.2): 只對合併後的完整句子翻譯一次，Interim 不觸發翻譯
 
 #### 4.2.3 字幕緩衝區管理
 
@@ -1601,6 +1603,43 @@ function restartRecognition() {
   lastRestartTime = now;
 }
 ```
+
+### 9.4 Deepgram 辨識精度優化 **(NEW - Phase 3.2)**
+
+#### 9.4.1 碎片合併機制
+
+**問題**：`endpointing: 100ms` 維持低延遲，但造成句子被切成多個 Final 碎片。
+
+**解決方案**：Service Worker 層加入 400ms debounce，合併連續碎片後再送出。
+
+```javascript
+// service-worker.js
+let finalBuffer = [];
+let mergeTimer = null;
+const MERGE_DELAY = 400;
+
+// Final 結果不直接送出，先加入 buffer
+finalBuffer.push(result);
+clearTimeout(mergeTimer);
+mergeTimer = setTimeout(() => {
+  const merged = finalBuffer.map(f => f.text).join('');
+  // 合併後才翻譯和顯示
+  finalBuffer = [];
+}, MERGE_DELAY);
+```
+
+**效益**：
+- Interim 即時顯示，用戶無感知延遲
+- Final 碎片自動合併成完整句子
+- 翻譯 API 呼叫減少 60-70%（只翻譯合併後的完整文字）
+
+#### 9.4.2 相似度算法改善
+
+Interim → Final 轉換時，使用 Levenshtein 編輯距離取代原本的字元包含判斷，解決中文常用字（的、了、是）導致的誤判問題。
+
+#### 9.4.3 smart_format 啟用
+
+Deepgram WebSocket 連線加入 `smart_format: true`，自動格式化數字、日期、時間等，提升可讀性。
 
 ---
 

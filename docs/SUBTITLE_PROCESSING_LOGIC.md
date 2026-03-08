@@ -61,7 +61,7 @@ Final 靜默校正（背景更新）
 | **字數限制檢查** | ✅ 必須檢查（避免 170+ 字） | ✅ 必須檢查（避免 170+ 字） |
 | **清理舊 interim** | ❌ 不清理（只負責校正） | ✅ 新增前清理所有舊 interim |
 | **單一 Interim 規則** | N/A | ✅ Buffer 中最多只有 1 個 interim |
-| **相似度計算** | ✅ 計算與 interim 的相似度 | ❌ 無 |
+| **相似度計算** | ✅ Levenshtein 編輯距離（NEW v6，原為字元包含判斷） | ❌ 無 |
 | **加入歷史記錄** | ✅ 保存到 `subtitleHistory` | ❌ 不保存 |
 | **最小顯示時間** | 1.5 秒（定時清理保護） | 無（被下一個 Interim 覆蓋） |
 | **清除時機** | 定時清理（每 1 秒） | 新 interim 到來時清理舊的 |
@@ -111,7 +111,12 @@ Final 結果到來
 │  └─ 3.4: 更新顯示
 │     └─ updateSubtitleDisplay()
 │
-├─ 步驟 4: 保存到歷史記錄
+├─ 步驟 4: 如果找不到對應 Interim（NEW v6）
+│  ├─ 直接加入 displayBuffer（不再丟棄）
+│  ├─ 清理空間 → cleanupBeforeAdd()
+│  └─ source: 'final'
+│
+├─ 步驟 5: 保存到歷史記錄
 │  └─ subtitleHistory.push({ text, timestamp, language })
 │
 └─ 完成（不調用 cleanupBuffer，由定時器負責）
@@ -476,7 +481,22 @@ const STALE_INTERIM_THRESHOLD = 5000; // 清理過舊 interim 的閾值 5 秒
 
 ## 📈 版本演進歷史
 
-### 版本 5 (2025-11-22 最新)
+### 版本 6 (2026-03-09 最新)
+**辨識精度優化**
+
+✅ **改進**：
+- **Final 找不到 Interim 時不再丟棄**：直接加入 displayBuffer，確保辨識結果不遺失
+- **相似度算法改用 Levenshtein 編輯距離**：取代原本的字元包含判斷，解決中文常用字（的、了、是）導致的誤判
+
+✅ **效果**：
+- 消除因 Interim→Final 時序問題導致的字幕遺失
+- 中文字幕相似度判斷更準確
+
+📝 **相關提交**: `fdfd978` - feat: 碎片合併提升字幕精度，減少翻譯浪費
+
+---
+
+### 版本 5 (2025-11-22)
 **心跳超時優化**
 
 ✅ **改進**：
@@ -621,6 +641,6 @@ const MIN_DISPLAY_TIME = 2000; // 從 1500ms 改為 2000ms
 
 ---
 
-**最後更新**: 2025-11-22
+**最後更新**: 2026-03-09
 **維護者**: Claude (AI Assistant)
-**當前版本**: v5 (Interim 主導 + 心跳優化)
+**當前版本**: v6 (Final 不丟棄 + Levenshtein 相似度)
