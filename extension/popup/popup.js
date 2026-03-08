@@ -718,7 +718,6 @@ async function initClaudeTranslationUI() {
   const keyStatus = document.getElementById('claude-key-status');
   const translationEnabledCheckbox = document.getElementById('translation-enabled');
   const targetLanguageSelect = document.getElementById('target-language');
-  const userGlossaryTextarea = document.getElementById('user-glossary');
   const translationStatsDiv = document.getElementById('translation-stats');
   const clearCacheBtn = document.getElementById('clear-translation-cache');
   const clearKeyBtn = document.createElement('button');
@@ -764,16 +763,14 @@ async function initClaudeTranslationUI() {
 
   // 載入翻譯設定
   const settings = await new Promise((resolve) => {
-    chrome.storage.sync.get(['translationEnabled', 'targetLanguage', 'userGlossary'], resolve);
+    chrome.storage.sync.get(['translationEnabled', 'targetLanguage'], resolve);
   });
 
   translationEnabled = settings.translationEnabled || false;
   targetLanguage = settings.targetLanguage || 'zh-TW';
-  const userGlossary = settings.userGlossary || '';
 
   translationEnabledCheckbox.checked = translationEnabled;
   targetLanguageSelect.value = targetLanguage;
-  userGlossaryTextarea.value = userGlossary;
 
   // 如果翻譯已啟用，顯示統計資訊
   if (translationEnabled && hasClaudeApiKey) {
@@ -941,17 +938,6 @@ async function initClaudeTranslationUI() {
     targetLanguage = targetLanguageSelect.value;
     await chrome.storage.sync.set({ targetLanguage });
     console.log('[Popup] 目標語言已更改為:', targetLanguage);
-  });
-
-  // 儲存使用者字典
-  let glossarySaveTimeout;
-  userGlossaryTextarea.addEventListener('input', () => {
-    clearTimeout(glossarySaveTimeout);
-    glossarySaveTimeout = setTimeout(async () => {
-      const glossary = userGlossaryTextarea.value;
-      await chrome.storage.sync.set({ userGlossary: glossary });
-      console.log('[Popup] 使用者字典已儲存');
-    }, 1000); // 1秒延遲儲存
   });
 
   // 清除翻譯快取

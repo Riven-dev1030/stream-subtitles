@@ -32,27 +32,6 @@ chrome.runtime.onInstalled.addListener((details) => {
   console.log('[Background] 使用 Web Speech API（瀏覽器內建，直接在頁面中運作）');
 });
 
-// 監聽儲存設定變更
-chrome.storage.onChanged.addListener((changes, namespace) => {
-  if (namespace === 'sync') {
-    if (changes.translationEnabled) {
-      translationEnabled = changes.translationEnabled.newValue;
-      console.log('[Background] 翻譯功能已透過儲存設定變更為:', translationEnabled ? '啟用' : '停用');
-    }
-    if (changes.targetLanguage) {
-      targetLanguage = changes.targetLanguage.newValue;
-      console.log('[Background] 目標語言已透過儲存設定變更為:', targetLanguage);
-    }
-    if (changes.userGlossary) {
-      userGlossary = changes.userGlossary.newValue;
-      console.log('[Background] 使用者字典已更新');
-      if (claudeTranslator) {
-        claudeTranslator.setGlossary(userGlossary);
-      }
-    }
-  }
-});
-
 // ============================================
 // Deepgram 與翻譯相關變數
 // ============================================
@@ -67,15 +46,6 @@ let offscreenDocumentCreated = false;
 // 翻譯設定
 let translationEnabled = false;
 let targetLanguage = 'zh-TW'; // 預設翻譯目標語言
-let userGlossary = ''; // 使用者字典
-
-// 初始化時從 storage 讀取設定
-chrome.storage.sync.get(['translationEnabled', 'targetLanguage', 'userGlossary'], (result) => {
-  translationEnabled = result.translationEnabled || false;
-  targetLanguage = result.targetLanguage || 'zh-TW';
-  userGlossary = result.userGlossary || '';
-  console.log('[Background] 已從 storage 初始化設定:', { translationEnabled, targetLanguage, hasGlossary: !!userGlossary });
-});
 
 // 初始化加密管理器
 async function initCryptoManager() {
@@ -200,22 +170,9 @@ async function handleMessage(message, sender, sendResponse) {
         handleGetTranslationStats(sendResponse);
         break;
 
-      case 'translateText':
-        // 翻譯單段文字 (用於 Web Speech API)
-        await handleTranslateText(message.text, message.targetLang, message.sourceLang, sendResponse);
-        break;
-
       case 'clearTranslationCache':
         // 清除翻譯快取
         handleClearTranslationCache(sendResponse);
-        break;
-
-      case 'resetTranslationHistory':
-        // 重置翻譯歷史 (上下文)
-        if (claudeTranslator) {
-          claudeTranslator.clearHistory();
-        }
-        sendResponse({ success: true });
         break;
 
       case 'updateDeepgramKey':
@@ -252,13 +209,13 @@ async function handleMessage(message, sender, sendResponse) {
         break;
 
       case 'getStatus':
-        // 取得狀態 - 從 storage 讀取用戶選擇的引擎與語言設定
-        chrome.storage.sync.get(['recognitionEngine', 'language', 'autoDetect'], (result) => {
+        // 取得狀態 - 從 storage 讀取用戶選擇的引擎
+        chrome.storage.sync.get(['recognitionEngine'], (result) => {
           const selectedEngine = result.recognitionEngine || 'webspeech';
           const statusResponse = {
             isRecording: isDeepgramActive, // Deepgram 運行狀態
-            currentLanguage: result.language || 'zh-TW',
-            autoDetect: result.autoDetect || false,
+            currentLanguage: 'zh-TW',
+            autoDetect: false,
             isDeepgramActive: isDeepgramActive,
             currentEngine: selectedEngine // 使用用戶選擇的引擎，而不是根據運行狀態判斷
           };
@@ -430,10 +387,9 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', autoDet
     }
 
     // 1.5 讀取翻譯設定並初始化 Claude 翻譯器（如果啟用）
-    const settings = await chrome.storage.sync.get(['translationEnabled', 'targetLanguage', 'userGlossary']);
+    const settings = await chrome.storage.sync.get(['translationEnabled', 'targetLanguage']);
     translationEnabled = settings.translationEnabled || false;
     targetLanguage = settings.targetLanguage || 'zh-TW';
-    userGlossary = settings.userGlossary || '';
 
     if (translationEnabled) {
       console.log('[Background] 翻譯已啟用，目標語言:', targetLanguage);
@@ -444,10 +400,9 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', autoDet
       if (claudeApiKey) {
         // 初始化 Claude 翻譯器
         claudeTranslator = new ClaudeTranslator(claudeApiKey, {
-          model: 'claude-haiku-4-5'
+          model: 'claude-haiku-4-5-20251001'
         });
-        claudeTranslator.setGlossary(userGlossary);
-        console.log('[Background] ✅ Claude 翻譯器已初始化，術語數:', Object.keys(claudeTranslator.glossary).length);
+        console.log('[Background] ✅ Claude 翻譯器已初始化');
       } else {
         console.warn('[Background] ⚠️ 翻譯已啟用但未設定 Claude API Key，將不進行翻譯');
         translationEnabled = false;
@@ -458,16 +413,9 @@ async function handleStartDeepgramRecognition(tabId, language = 'zh-TW', autoDet
     }
 
     // 2. 初始化 DeepgramClient
-    // 針對台灣習慣優化：如果是繁體中文，預設開啟 zh-TW 與 en 的混合辨識 (Code-switching)
-    let actualLanguage = language;
-    if (autoDetect) {
-      actualLanguage = 'multi';
-    } else if (language === 'zh-TW') {
-      // 雖然設為 zh-TW,en，但 DeepgramClient 會將其轉換為 language=multi 以支援混合辨識
-      actualLanguage = 'zh-TW,en';
-    }
-
-    console.log('[Background] 初始化 Deepgram Client，語言設定:', actualLanguage, autoDetect ? '(自動檢測)' : '');
+    // 如果啟用自動檢測，使用 'multi' 語言模式（支援多語言 code-switching）
+    const actualLanguage = autoDetect ? 'multi' : language;
+    console.log('[Background] 初始化 Deepgram Client，語言:', actualLanguage, autoDetect ? '(多語言自動檢測)' : '');
     console.log('[Background] API Key 前綴:', apiKey ? apiKey.substring(0, 10) + '...' : 'null');
 
     // **關鍵修復：總是創建新的 DeepgramClient，確保乾淨狀態**
@@ -796,46 +744,6 @@ async function handleTestClaude(sendResponse) {
       success: false,
       error: error.message || '測試失敗'
     });
-  }
-}
-
-/**
- * 處理單段文字翻譯請求
- */
-async function handleTranslateText(text, targetLang, sourceLang, sendResponse) {
-  try {
-    // 如果翻譯器未初始化，嘗試初始化
-    if (!claudeTranslator) {
-      const crypto = await initCryptoManager();
-      const claudeApiKey = await crypto.getClaudeApiKey();
-
-      if (claudeApiKey) {
-        claudeTranslator = new ClaudeTranslator(claudeApiKey, {
-          model: 'claude-haiku-4-5'
-        });
-
-        // 確保加載術語
-        const result = await chrome.storage.sync.get(['userGlossary']);
-        if (result.userGlossary) {
-          claudeTranslator.setGlossary(result.userGlossary);
-        }
-      }
-    }
-
-    if (!claudeTranslator) {
-      sendResponse({ success: false, error: '翻譯器未設定' });
-      return;
-    }
-
-    const result = await claudeTranslator.translate(text, targetLang || targetLanguage, sourceLang);
-    sendResponse({
-      success: true,
-      translatedText: result.translatedText,
-      cached: result.cached
-    });
-  } catch (error) {
-    console.error('[Background] 翻譯請求失敗:', error);
-    sendResponse({ success: false, error: error.message });
   }
 }
 

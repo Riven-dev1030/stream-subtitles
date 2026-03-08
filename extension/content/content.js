@@ -28,8 +28,6 @@ let recognition = null;
 let isRecording = false;
 let currentLanguage = 'en';
 let autoDetect = false;
-let translationEnabled = false;
-let targetLanguage = 'zh-TW';
 let heartbeatTimer = null; // 心跳檢測計時器
 const HEARTBEAT_INTERVAL = 1000; // 1秒檢測一次
 const HEARTBEAT_TIMEOUT = 2500; // 2.5秒無結果就重啟（經過測試我覺得這是在卡住後能以最短的時間繼續輸出字幕的恰當的數字)
@@ -141,26 +139,6 @@ function init() {
     return true; // 保持訊息通道開啟
   });
 
-  // 監聽儲存設定變更
-  chrome.storage.onChanged.addListener((changes, namespace) => {
-    if (namespace === 'sync') {
-      if (changes.translationEnabled) {
-        translationEnabled = changes.translationEnabled.newValue;
-        console.log('[Content] 翻譯功能已', translationEnabled ? '啟用' : '停用');
-      }
-      if (changes.targetLanguage) {
-        targetLanguage = changes.targetLanguage.newValue;
-        console.log('[Content] 目標語言已更新為:', targetLanguage);
-      }
-      if (changes.language) {
-        currentLanguage = changes.language.newValue;
-      }
-      if (changes.autoDetect) {
-        autoDetect = changes.autoDetect.newValue;
-      }
-    }
-  });
-
   // 鍵盤快捷鍵
   document.addEventListener('keydown', handleKeyboardShortcut);
 
@@ -251,9 +229,6 @@ function startRecording(language = 'en', autoDetectMode = false) {
     // 啟動心跳檢測
     startHeartbeat();
 
-    // 重置翻譯歷史
-    chrome.runtime.sendMessage({ action: 'resetTranslationHistory' });
-
   } catch (error) {
     console.error('[Content] 啟動失敗:', error);
     showToast('❌ 啟動失敗: ' + error.message);
@@ -326,7 +301,7 @@ function changeLanguage(language, autoDetectMode) {
 }
 
 // 處理語音辨識結果
-async function handleSpeechResult(event) {
+function handleSpeechResult(event) {
   try {
     // 更新最後收到結果的時間（用於心跳檢測）
     lastResultTimestamp = Date.now();
@@ -342,31 +317,8 @@ async function handleSpeechResult(event) {
 
       console.log('[Content] 辨識結果:', transcript, isFinal ? '(final)' : '(interim)', 'confidence:', confidence);
 
-      let translatedText = null;
-
-      // 如果啟用翻譯，且為最終結果，請求翻譯
-      // 注意：為了節省 API 成本與避免 UI 頻繁跳動，我們只翻譯 Final 結果
-      if (translationEnabled && isFinal && transcript.trim()) {
-        try {
-          const response = await new Promise((resolve) => {
-            chrome.runtime.sendMessage({
-              action: 'translateText',
-              text: transcript,
-              targetLang: targetLanguage,
-              sourceLang: currentLanguage
-            }, resolve);
-          });
-
-          if (response && response.success) {
-            translatedText = response.translatedText;
-          }
-        } catch (transError) {
-          console.error('[Content] 翻譯請求失敗:', transError);
-        }
-      }
-
       // 顯示字幕
-      displaySubtitle(transcript, isFinal, currentLanguage, translatedText);
+      displaySubtitle(transcript, isFinal);
     }
   } catch (error) {
     console.error('[Content] 處理語音辨識結果失敗:', error);
@@ -646,21 +598,11 @@ function displaySubtitle(text, isFinal, language = null, translatedText = null) 
         language: language || interimItem.language, // 保留或更新語言資訊
         translatedText: translatedText || interimItem.translatedText // 保留或更新翻譯
       };
+
+      updateSubtitleDisplay();
     } else {
-      console.log('[Content] ⚠️ 找不到對應的 Interim，作為新句子加入 Buffer');
-
-      // 找不到對應的 Interim，則作為新句子加入（確保 Final 結果不漏掉）
-      cleanupBeforeAdd([normalized]);
-      displayBuffer.push({
-        text: normalized,
-        timestamp: Date.now(),
-        source: 'final',
-        language: language,
-        translatedText: translatedText
-      });
+      console.log('[Content] ⚠️ 找不到對應的 Interim，Final 可能太晚到達');
     }
-
-    updateSubtitleDisplay();
 
     // 存入歷史記錄
     subtitleHistory.push({
@@ -1039,18 +981,12 @@ function showToast(message) {
 
 // 載入設定
 function loadSettings() {
-  chrome.storage.sync.get(['language', 'autoDetect', 'translationEnabled', 'targetLanguage'], (result) => {
+  chrome.storage.sync.get(['language', 'autoDetect'], (result) => {
     if (result.language) {
       currentLanguage = result.language;
     }
     if (result.autoDetect !== undefined) {
       autoDetect = result.autoDetect;
-    }
-    if (result.translationEnabled !== undefined) {
-      translationEnabled = result.translationEnabled;
-    }
-    if (result.targetLanguage) {
-      targetLanguage = result.targetLanguage;
     }
     updateControlPanel();
   });
